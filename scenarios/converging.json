@@ -1,0 +1,65 @@
+{
+  "scenario_name": "converging",
+  "seed": 42,
+  "notes": "Four-aircraft converging conflict on oblique bearings (45\u00b0,135\u00b0,225\u00b0,315\u00b0).",
+  "center": {
+    "lat": 52.0,
+    "lon": 4.0,
+    "alt_ft": 10000.0
+  },
+  "sim_dt_s": 1.0,
+  "agents": [
+    {
+      "id": "A1",
+      "type": "A320",
+      "lat": 51.78786796564403,
+      "lon": 3.655440460613918,
+      "hdg_deg": 45.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 52.0,
+        "lon": 4.0
+      }
+    },
+    {
+      "id": "A2",
+      "type": "A320",
+      "lat": 52.21213203435597,
+      "lon": 3.655440460613918,
+      "hdg_deg": 135.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 52.0,
+        "lon": 4.0
+      }
+    },
+    {
+      "id": "A3",
+      "type": "A320",
+      "lat": 52.21213203435597,
+      "lon": 4.344559539386082,
+      "hdg_deg": 225.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 52.0,
+        "lon": 4.0
+      }
+    },
+    {
+      "id": "A4",
+      "type": "A320",
+      "lat": 51.78786796564403,
+      "lon": 4.344559539386082,
+      "hdg_deg": 315.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 52.0,
+        "lon": 4.0
+      }
+    }
+  ]
+}

@@ -1,0 +1,194 @@
+# ATC Hallucination Detection Repository
+# .gitignore for Multi-Agent Reinforcement Learning Project
+
+# Training Models and Checkpoints
+models/
+checkpoint_*/
+*.pkl
+*.pth
+*.pt
+*.model
+*.weights
+
+# Results and Analysis Data
+results/
+results_*/
+*_analysis_*/
+shift_analysis_*/
+targeted_shift_analysis_*/
+*.zip
+
+# Temporary and Cache Files
+vis_temp/
+temp/
+cache/
+*.tmp
+*.cache
+.cache/
+
+# Episode and Trajectory Data
+episode_gifs/
+*.gif
+traj_*.csv
+trajectory_*.csv
+trajectory_*.json
+training_progress.csv
+
+# Unwanted Development Files
+Unwanted/
+debug/
+scratch/
+experimental/
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# PyTorch
+*.pth
+*.pt
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# IPython
+profile_default/
+ipython_config.py
+
+# pyenv
+.python-version
+
+# pipenv
+Pipfile.lock
+
+# poetry
+poetry.lock
+
+# celery beat schedule file
+celerybeat-schedule
+celerybeat.pid
+
+# SageMath parsed files
+*.sage.py
+
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Spyder project settings
+.spyderproject
+.spyproject
+
+# Rope project settings
+.ropeproject
+
+# mkdocs documentation
+/site
+
+# mypy
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# Pyre type checker
+.pyre/
+
+# pytype static type analyzer
+.pytype/
+
+# Cython debug symbols
+cython_debug/
+
+# Ray/RLLib specific
+ray_results/
+~/ray_results/
+/tmp/ray/
+
+# BlueSky specific
+bluesky_cache/
+*.p
+
+# OS specific
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE specific
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Logs
+*.log
+logs/
+
+# Data files (large datasets)
+*.h5
+*.hdf5
+*.nc
+*.zarr
+
+# Matplotlib
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.svg
+*.eps
+
+# Except documentation images
+!docs/*.png
+!docs/*.jpg
+!docs/*.jpeg
+!docs/images/*.png
+!docs/images/*.jpg
+!docs/images/*.jpeg
+
+# Configuration files with sensitive data
+config_local.py
+secrets.json
+.secrets
+
+# Large result files
+*.csv
+*.parquet
+
+# Except small example/schema files
+!scenarios/*.json
+!examples/*.csv
+!tests/fixtures/*.csv
+
+#Recycled files
+*.bak  
+$RECYCLE.BIN\
