@@ -1,0 +1,52 @@
+{
+  "scenario_name": "parallel",
+  "seed": 42,
+  "notes": "Three-aircraft parallel/in-trail northbound on one track with 6 NM initial gaps.",
+  "center": {
+    "lat": 52.0,
+    "lon": 4.0,
+    "alt_ft": 10000.0
+  },
+  "sim_dt_s": 1.0,
+  "agents": [
+    {
+      "id": "A1",
+      "type": "A320",
+      "lat": 51.6,
+      "lon": 4.0,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 52.4,
+        "lon": 4.0
+      }
+    },
+    {
+      "id": "A2",
+      "type": "A320",
+      "lat": 51.7,
+      "lon": 4.0,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 52.4,
+        "lon": 4.0
+      }
+    },
+    {
+      "id": "A3",
+      "type": "A320",
+      "lat": 51.8,
+      "lon": 4.0,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 52.4,
+        "lon": 4.0
+      }
+    }
+  ]
+}
