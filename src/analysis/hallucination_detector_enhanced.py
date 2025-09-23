@@ -12,7 +12,7 @@ Outputs a pandas-friendly dict per episode.
 """
 
 import math
-from typing import Dict, Any, List, Tuple
+from typing import Dict, Any, List, Tuple, Optional
 
 import numpy as np
 
@@ -60,7 +60,7 @@ class HallucinationDetector:
         self.theta_min_deg = float(action_thresh[0])
         self.v_min_kt = float(action_thresh[1])
         self.res_window_s = float(res_window_s)
-        self.action_period_s = float(action_period_s)
+        self.action_period_s = float(action_period_s)  # Should match environment timestep
         self.los_threshold_nm = float(los_threshold_nm)
 
     def _detect_los_events(self, pos_seq: List[Dict[str, Tuple[float, float]]]) -> Dict[str, Any]:
@@ -188,12 +188,18 @@ class HallucinationDetector:
             'waypoint_reached_ratio': float(waypoint_reached_ratio)
         }
 
-    def _alerts_from_actions(self, actions_seq: List[Dict[str, np.ndarray]]) -> np.ndarray:
+    def _alerts_from_actions(self, actions_seq: List[Dict[str, np.ndarray]], waypoint_status: Optional[Dict] = None) -> np.ndarray:
         T = len(actions_seq)
         a = np.zeros(T, dtype=bool)
+        waypoint_status = waypoint_status or {}
+        
         for t in range(T):
             acts = actions_seq[t]
             for aid, arr in acts.items():
+                # Skip agents who have reached their waypoint
+                if waypoint_status.get(aid, {}).get(t, False):
+                    continue
+                    
                 arr = np.asarray(arr).reshape(-1)
                 dpsi = float(arr[0]) if arr.size > 0 else 0.0
                 dvkt = float(arr[1]) if arr.size > 1 else 0.0
@@ -202,19 +208,32 @@ class HallucinationDetector:
                     break
         return a
 
-    def _ground_truth_series(self, traj: Dict[str, Any], sep_nm: float) -> Tuple[np.ndarray, float, int]:
-        """Return g[t] ∈ {0,1}, min CPA, and count of conflict timesteps."""
+    def _ground_truth_series(self, traj: Dict[str, Any], sep_nm: float, waypoint_status: Optional[Dict] = None) -> Tuple[np.ndarray, float, int]:
+        """Return g[t] ∈ {0,1}, min CPA, and count of conflict timesteps, excluding agents who reached waypoints."""
         pos_seq = traj.get("positions", [])
         agents = traj.get("agents", {})
+        waypoint_status = waypoint_status or {}
         T = len(pos_seq)
         g = np.zeros(T, dtype=bool)
         min_cpa = float('inf')
+        
+        # Debug: count total exclusions
+        total_exclusions = 0
+        
         for t in range(T):
             step = pos_seq[t]
             keys = list(step.keys())
-            for i in range(len(keys)):
-                for j in range(i+1, len(keys)):
-                    ai, aj = keys[i], keys[j]
+            
+            # Filter out agents who have reached waypoints
+            active_keys = [aid for aid in keys if not waypoint_status.get(aid, {}).get(t, False)]
+            excluded_keys = [aid for aid in keys if waypoint_status.get(aid, {}).get(t, False)]
+            
+            if excluded_keys:
+                total_exclusions += len(excluded_keys)
+            
+            for i in range(len(active_keys)):
+                for j in range(i+1, len(active_keys)):
+                    ai, aj = active_keys[i], active_keys[j]
                     lat_i, lon_i = step[ai]
                     lat_j, lon_j = step[aj]
                     # Approximate velocities from logged headings/speeds
@@ -232,7 +251,13 @@ class HallucinationDetector:
                     min_cpa = min(min_cpa, dcpa)
                     if dcpa < sep_nm:
                         g[t] = True
+        
         num_conflict_steps = int(g.sum())
+        
+        # Debug output
+        if total_exclusions > 0:
+            print(f"DEBUG: Excluded {total_exclusions} agent-timesteps due to waypoint completion")
+        
         return g, min_cpa, num_conflict_steps
 
     def _merge_runs(self, b: np.ndarray):
@@ -265,7 +290,7 @@ class HallucinationDetector:
                         m = d
         return m if m < float('inf') else 0.0
 
-    def compute(self, trajectory: Dict[str, Any], sep_nm: float = 5.0) -> Dict[str, Any]:
+    def compute(self, trajectory: Dict[str, Any], sep_nm: float = 5.0, return_series: bool = False) -> Dict[str, Any]:
         pos_seq = trajectory.get("positions", [])
         actions_seq = trajectory.get("actions", [])
         
@@ -289,14 +314,22 @@ class HallucinationDetector:
                     "avg_path_length_nm": 0.0, "flight_time_s": 0.0,
                     "path_efficiency": 0.0, "waypoint_reached_ratio": 0.0}
 
-        g, min_cpa, num_conflict_steps = self._ground_truth_series(trajectory, sep_nm)
-        a = self._alerts_from_actions(actions_seq)
+        # Get waypoint status from trajectory metadata if available
+        waypoint_status = trajectory.get("waypoint_status", {})
+        
+        g, min_cpa, num_conflict_steps = self._ground_truth_series(trajectory, sep_nm, waypoint_status)
+        a = self._alerts_from_actions(actions_seq, waypoint_status)
 
         # Confusion at timestep level
-        TP = int(np.sum(a & g))
-        FP = int(np.sum(a & ~g))
-        FN = int(np.sum(~a & g))
-        TN = int(np.sum(~a & ~g))
+        TP_mask = a & g
+        FP_mask = a & ~g
+        FN_mask = ~a & g
+        TN_mask = ~a & ~g
+        
+        TP = int(np.sum(TP_mask))
+        FP = int(np.sum(FP_mask))
+        FN = int(np.sum(FN_mask))
+        TN = int(np.sum(TN_mask))
 
         ghost = FP / max(1, FP + TN)
         missed = FN / max(1, FN + TP)
@@ -352,5 +385,34 @@ class HallucinationDetector:
         
         # Add efficiency metrics
         result.update(efficiency_metrics)
+        
+        # Optionally return per-step series (for visualization)
+        if return_series:
+            # per-step min separation (HMD) for overlay
+            per_step_min_sep = np.zeros(T, dtype=float)
+            for t in range(T):
+                step = pos_seq[t]
+                aids = list(step.keys())
+                m = float('inf')
+                for i in range(len(aids)):
+                    for j in range(i+1, len(aids)):
+                        lat_i, lon_i = step[aids[i]]
+                        lat_j, lon_j = step[aids[j]]
+                        d = haversine_nm(lat_i, lon_i, lat_j, lon_j)
+                        if d < m: m = d
+                per_step_min_sep[t] = (m if m < float('inf') else 0.0)
+
+            return {
+                **result,  # existing episode-level dict
+                "series": {
+                    "gt_conflict": g.astype(int).tolist(),
+                    "alert": a.astype(int).tolist(),
+                    "tp": TP_mask.astype(int).tolist(),
+                    "fp": FP_mask.astype(int).tolist(),
+                    "fn": FN_mask.astype(int).tolist(),
+                    "tn": TN_mask.astype(int).tolist(),
+                    "min_sep_nm": per_step_min_sep.tolist()
+                }
+            }
         
         return result

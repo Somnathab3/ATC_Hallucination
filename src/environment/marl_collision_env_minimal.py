@@ -193,7 +193,9 @@ class MARLCollisionEnv(ParallelEnv):
         self._prev_wp_dist_nm: Dict[str, Optional[float]] = {aid: None for aid in self.possible_agents}
         self._conflict_on_prev = {aid: 0 for aid in self.possible_agents}
         self._waypoint_hits = {aid: 0 for aid in self.possible_agents}  # Track cumulative waypoint completions
+        self._agents_to_stop_logging = set()  # Track agents that should no longer be logged
         self._waypoint_reached = {aid: False for aid in self.possible_agents}  # Track if agent has reached waypoint this episode
+        self._waypoint_reached_this_step = {aid: False for aid in self.possible_agents}  # Track if agent reached waypoint THIS step
 
         # Baselines captured from the scenario (per agent)
         self._base_cas_kt = {aid: 250.0 for aid in self.possible_agents}  # overwritten on reset
@@ -399,7 +401,9 @@ class MARLCollisionEnv(ParallelEnv):
         self._team_dphi_ema = 0.0
         self._prev_wp_dist_nm = {aid: None for aid in self.possible_agents}
         self._waypoint_hits = {aid: 0 for aid in self.possible_agents}  # Reset waypoint hit counters
+        self._agents_to_stop_logging = set()  # Reset agents to stop logging
         self._waypoint_reached = {aid: False for aid in self.possible_agents}  # Reset waypoint reached flags
+        self._waypoint_reached_this_step = {aid: False for aid in self.possible_agents}  # Reset this-step flags
         
         infos = {aid: {} for aid in self.agents}
         return obs, infos
@@ -493,6 +497,9 @@ class MARLCollisionEnv(ParallelEnv):
         pairwise_dist_nm: Dict[str, Dict[str, float]] = {aid: {} for aid in self.agents}
         conflict_pairs_count = 0
         
+        # Reset this-step waypoint tracking
+        self._waypoint_reached_this_step = {aid: False for aid in self.possible_agents}
+        
         # Track if any pair is inside collision band this step
         any_collision_this_step = False
         
@@ -518,6 +525,7 @@ class MARLCollisionEnv(ParallelEnv):
             # Check if agent reaches waypoint (within 5 NM)
             if dist_wp_nm <= 5.0:
                 reached_wp[aid_i] = 1
+                self._waypoint_reached_this_step[aid_i] = True  # Mark as reached this step
                 # Track persistent waypoint completion (only count once per episode)
                 if not self._waypoint_reached[aid_i]:
                     first_time_reach[aid_i] = True  # Mark as first-time reach
@@ -763,7 +771,12 @@ class MARLCollisionEnv(ParallelEnv):
         if self.log_trajectories:
             self._log_step(conflict_flags, collision_flags, 
                           rewards, pairwise_dist_nm, dist_wp_nm_by_agent, 
-                          conflict_pairs_count, reward_parts_by_agent)
+                          conflict_pairs_count, reward_parts_by_agent, first_time_reach)
+        
+        # Add agents to stop-logging set for NEXT step if they reached waypoint this step
+        for aid in self.agents:
+            if self._waypoint_reached.get(aid, False) and aid not in self._agents_to_stop_logging:
+                self._agents_to_stop_logging.add(aid)
 
         # End episode when termination conditions are met
         if episode_complete:
@@ -961,12 +974,15 @@ class MARLCollisionEnv(ParallelEnv):
                   collision_flags: Dict[str, int], rewards: Dict[str, float],
                   pairwise_dist_nm: Dict[str, Dict[str, float]], 
                   dist_wp_nm_by_agent: Dict[str, float], conflict_pairs_count: int,
-                  reward_parts_by_agent: Dict[str, dict]):
-        """Append step trace rows for all agents with enhanced data."""
+                  reward_parts_by_agent: Dict[str, dict], first_time_reach: Dict[str, bool]):
+        """Append step trace rows for all agents with enhanced data."""        
         # Stable order for distance columns
         all_ids = list(self.possible_agents)
         
         for aid in self.agents:
+            # Skip logging for agents that reached waypoint in previous steps
+            if aid in self._agents_to_stop_logging:
+                continue
             idx = bs.traf.id2idx(aid)
             
             # Basic state data

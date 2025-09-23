@@ -333,7 +333,7 @@ def train_frozen(repo_root: str,
 
         # Save checkpoint only when reward improves significantly (less negative = better)
         current_reward = float(rew if isinstance(rew, (int, float)) else float('-inf'))
-        improvement_threshold = 50.0  # Only save if reward improves by at least 50 points
+        improvement_threshold = 5.0  # Only save if reward improves by at least 50 points
         if current_reward > (best_reward + improvement_threshold):
             best_reward = current_reward
             models_dir = os.path.join(results_dir, "models")
