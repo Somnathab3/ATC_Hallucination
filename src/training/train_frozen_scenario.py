@@ -1,4 +1,3 @@
-
 """
 Training on the single frozen scenario with     # Register env once
     env_name = "marl_collision_env_v0"
@@ -21,12 +20,13 @@ import os
 import json
 import time
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, Optional
 
 import numpy as np
 import pandas as pd
 import csv
 import ray
+import torch
 
 from ray.rllib.algorithms.ppo import PPOConfig
 from ray.rllib.algorithms.sac import SACConfig
@@ -46,16 +46,36 @@ from src.environment.marl_collision_env_minimal import MARLCollisionEnv
 LOGGER = logging.getLogger("train_frozen")
 LOGGER.setLevel(logging.INFO)
 
+def check_gpu_availability():
+    """Check and report GPU availability."""
+    print(f"🔍 GPU Detection:")
+    print(f"  CUDA available: {torch.cuda.is_available()}")
+    print(f"  CUDA device count: {torch.cuda.device_count()}")
+    if torch.cuda.is_available():
+        for i in range(torch.cuda.device_count()):
+            print(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
+            print(f"  Memory: {torch.cuda.get_device_properties(i).total_memory / 1e9:.1f} GB")
+    return torch.cuda.is_available()
+
 # Initialize Ray with better configuration to reduce warnings
-def init_ray():
-    """Initialize Ray with optimized settings to reduce warnings."""
+def init_ray(use_gpu: bool = False):
+    """Initialize Ray with optimized settings and GPU support."""
     if not ray.is_initialized():
-        ray.init(
-            local_mode=True,  # Use local mode to avoid worker conflicts with BlueSky
-            log_to_driver=False,
-            configure_logging=False,
-            ignore_reinit_error=True,  # Allow reinit if needed
-        )
+        init_kwargs = {
+            "log_to_driver": False,
+            "configure_logging": False,
+            "ignore_reinit_error": True,  # Allow reinit if needed
+        }
+        
+        if use_gpu and torch.cuda.is_available():
+            # Use distributed mode with GPU - note: Ray init doesn't need num_gpus for basic setup
+            print(f"🚀 Initializing Ray with GPU support")
+        else:
+            # Use local mode to avoid worker conflicts with BlueSky (CPU-only)
+            init_kwargs["local_mode"] = True
+            print("🔧 Initializing Ray in local mode (CPU-only)")
+        
+        ray.init(**init_kwargs)
 
 
 def make_env(env_config: Dict[str, Any]):
@@ -68,25 +88,44 @@ def train_frozen(repo_root: str,
                  seed: int = 42,
                  scenario_name: str = "head_on",
                  timesteps_total: int = 2_000_000,
-                 checkpoint_every: int = 100_000) -> str:
+                 checkpoint_every: int = 100_000,
+                 use_gpu: Optional[bool] = None) -> str:
     """
     Returns: path to final checkpoint.
+    
+    Args:
+        use_gpu: If None, auto-detect GPU. If True, force GPU. If False, force CPU.
     """
     scenario_path = os.path.join(repo_root, "scenarios", f"{scenario_name}.json")
     if not os.path.exists(scenario_path):
         raise FileNotFoundError(f"Scenario '{scenario_name}' not found at {scenario_path}. Available scenarios: head_on, t_formation, parallel, converging, canonical_crossing")
 
+    # Check GPU availability and initialize Ray
+    gpu_available = check_gpu_availability()
+    
+    # Determine GPU usage
+    if use_gpu is None:
+        use_gpu = gpu_available  # Auto-detect
+    elif use_gpu and not gpu_available:
+        print("⚠️  GPU requested but not available. Falling back to CPU.")
+        use_gpu = False
+    
+    print(f"🎯 Training mode: {'GPU' if use_gpu else 'CPU'}")
+    
     # Initialize Ray with optimized settings
-    init_ray()
+    init_ray(use_gpu=use_gpu)
 
     # Register env once
     env_name = "marl_collision_env_v0"
     register_env(env_name, lambda cfg: ParallelPettingZooEnv(MARLCollisionEnv(cfg)))
 
-    # Setup timestamped results directory
+    # Setup timestamped results directory with algo and scenario info under ./training/
     import time
     timestamp = time.strftime("%Y%m%d_%H%M%S")
-    results_dir = os.path.join(repo_root, f"results_{timestamp}")
+    scenario_base_name = os.path.splitext(os.path.basename(scenario_path))[0]  # Extract scenario name without extension
+    training_dir = os.path.join(repo_root, "training")
+    os.makedirs(training_dir, exist_ok=True)
+    results_dir = os.path.join(training_dir, f"results_{algo}_{scenario_base_name}_{timestamp}")
     os.makedirs(results_dir, exist_ok=True)
 
     env_config = {
@@ -115,12 +154,11 @@ def train_frozen(repo_root: str,
         "team_neighbor_threshold_km": 10.0,
         
         # Individual reward components (override defaults if desired)
-        "drift_penalty_per_sec": -0.01,
+        "drift_penalty_per_sec": -0.1,
         "progress_reward_per_km": 0.02,
-        "backtrack_penalty_per_km": -0.02,
+        "backtrack_penalty_per_km": -0.1,
         "time_penalty_per_sec": -0.0005,
-        "reach_reward": 50.0,  # Fixed: was 10.0, should match environment
-        "heading_align_per_sec": 0.001,
+        "reach_reward": 10.0,  # Fixed: was 50.0, should match environment
         "intrusion_penalty": -50.0,
         "conflict_dwell_penalty_per_sec": -0.1,
     }
@@ -148,62 +186,116 @@ def train_frozen(repo_root: str,
     if algo.upper() == "PPO":
         config = (PPOConfig()
                   .environment(env=env_name, env_config=env_config)
-                  .framework("torch")
+                  .framework("torch", torch_compile_learner=False)  # Disable compilation for stability
                   .api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
                   .env_runners(
                       num_env_runners=1,        # reduced for speed optimization
                       num_envs_per_env_runner=1,        # keep 1 for BlueSky (heavier per process)
-                      rollout_fragment_length=200,  # batches sampled per worker before sending to learner
+                      rollout_fragment_length=200, # batches sampled per worker before sending to learner
                       max_requests_in_flight_per_env_runner=1,  # Reduce memory pressure
+                      num_cpus_per_env_runner=1,
+                      num_gpus_per_env_runner=0,  # Workers don't need GPU
                   )
-                  .training(gamma=0.99,
-                            lr=5e-4,
-                            train_batch_size=4096,   # Reduced from 16384 for more frequent updates
-                            model={"fcnet_hiddens": [256, 256], 
-                                   "fcnet_activation": "tanh",
-                                   "free_log_std": False},
-                            grad_clip=10.0)
+                  .training(
+                      gamma=0.995,              # Slightly higher gamma for better long-term planning
+                      lr=3e-4,                  # Lower learning rate for stability
+                      train_batch_size=8192 if use_gpu else 4096,   # Larger batch for GPU
+                      num_epochs=10,            # More epochs per update (replaces num_sgd_iter)
+                      model={"fcnet_hiddens": [256, 256], 
+                             "fcnet_activation": "tanh",
+                             "free_log_std": False},
+                      grad_clip=10.0
+                  )
                   .evaluation(
-                      evaluation_interval=10,     # Less frequent evaluation to reduce conflicts
-                      evaluation_duration=1,
+                      evaluation_interval=1,     # Evaluate every iteration to track true performance
+                      evaluation_duration=10,    # More episodes for better evaluation
                       evaluation_duration_unit="episodes",
                       evaluation_parallel_to_training=False,  # Sequential to avoid conflicts
                       evaluation_num_env_runners=0,  # No separate eval workers
-                      evaluation_config={"explore": False}
+                      evaluation_config={"explore": False}  # Deterministic evaluation
                   )
                   .multi_agent(
                       policies=policies,
                       policy_mapping_fn=policy_mapping_fn,
                       policies_to_train=["shared_policy"],
                   )
-                  .resources(num_gpus=0)
+                  .resources(
+                      num_gpus=1 if use_gpu else 0,  # GPU for training
+                  )
                   )
         # Don't normalize actions as we handle scaling in the environment
-        config.clip_actions = True       # Ensure policy output is clipped to space bounds
-        config.normalize_actions = False
-        config.seed = seed
-        algo_obj = config.build_algo()  # Use build_algo() instead of deprecated build()
+        # Set additional config parameters
+        from ray.rllib.algorithms.ppo import PPO
+        algo_obj = PPO(config=config)  # Build the algorithm
     elif algo.upper() == "SAC":
-        config = (SACConfig()
-                  .environment(env=env_name, env_config=env_config)
-                  .framework("torch")
-                  .env_runners(
-                      num_env_runners=1,
-                      num_envs_per_env_runner=1,
-                      rollout_fragment_length=200,
-                  )
-                  .training(gamma=0.99, lr=3e-4,
-                            train_batch_size=8192,   # Reduced from 32768 for more frequent updates
-                            model={"fcnet_hiddens": [256, 256], "fcnet_activation": "relu"})
-                  .multi_agent(
-                      policies=policies,
-                      policy_mapping_fn=policy_mapping_fn,
-                      policies_to_train=["shared_policy"],
-                  )
-                  .resources(num_gpus=0)
-                  )
-        config.seed = seed
-        algo_obj = config.build_algo()  # Use build_algo() instead of deprecated build()
+        from ray.rllib.algorithms.sac import SAC, SACConfig
+
+        # Modern SAC configuration using SACConfig builder pattern
+        # Use IDENTICAL env_config as PPO for fair comparison
+        config = (
+            SACConfig()
+            .environment(env=env_name, env_config=env_config)  # Same config as PPO
+            .framework("torch")
+            .api_stack(
+                enable_rl_module_and_learner=False,
+                enable_env_runner_and_connector_v2=False,
+            )
+            .training(
+                lr=1e-3,  # Increased from 3e-4 for better SAC learning
+                gamma=0.99,
+                train_batch_size=1024,  # Moderate batch size for stability
+                replay_buffer_config={
+                    'type': 'MultiAgentPrioritizedReplayBuffer',
+                    'capacity': 1000000,  # Large replay buffer for better sample diversity
+                    'prioritized_replay_alpha': 0.6,
+                    'prioritized_replay_beta': 0.4,
+                    'prioritized_replay_eps': 1e-6,
+                },
+                model={
+                    "fcnet_hiddens": [256, 256],
+                    "fcnet_activation": "relu",
+                    "free_log_std": False,
+                },
+            )
+            .env_runners(
+                num_env_runners=0,
+                rollout_fragment_length=200,  # Longer fragments for better value estimates
+                batch_mode="complete_episodes",  # Use complete episodes for cleaner learning
+                num_envs_per_env_runner=1,
+                create_env_on_local_worker=True,
+            )
+            .multi_agent(
+                policies=policies,
+                policy_mapping_fn=policy_mapping_fn,
+                policies_to_train=["shared_policy"],
+            )
+            .resources(num_gpus=1 if use_gpu else 0)
+            .debugging(log_level="ERROR")
+        )
+        
+        # CRITICAL SAC FIXES: Fix entropy collapse with proper auto-entropy
+        # SAC requires automatic entropy tuning to prevent alpha collapse
+        
+        # Fix SAC entropy configuration to prevent α collapse
+        config["target_entropy"] = "auto"  # Let RLlib automatically set optimal target
+        config["initial_alpha"] = 0.2  # Non-zero start value, will be tuned automatically
+        config["tau"] = 0.005  # Soft update rate for target networks
+        config["target_network_update_freq"] = 1
+        
+        # Ensure proper exploration for SAC (keep stochastic during training)
+        config["exploration_config"] = {
+            "type": "StochasticSampling",  # SAC uses stochastic policy sampling
+        }
+        
+        # Fix warmup period for proper SAC learning - CRITICAL: Lower warmup!
+        config["num_steps_sampled_before_learning_starts"] = 1000  # Much lower warmup for testing
+        config["training_intensity"] = 1.0  # Standard training intensity
+        
+        # Ensure observation normalization is consistent
+        config["observation_filter"] = "MeanStdFilter"
+        config["synchronize_filters"] = True
+        
+        algo_obj = SAC(config=config)
     else:
         raise ValueError("algo must be 'PPO' or 'SAC'")
 
@@ -255,14 +347,14 @@ def train_frozen(repo_root: str,
                     conflict_free_ep = (df["conflict_flag"].sum() == 0)
         except Exception as e:
             if it == 1:  # Only print debug for first iteration
-                print(f"Debug: Error checking conflict_free_ep: {e}")
+                pass  # Silent debug
             pass
 
         zero_conflict_streak = zero_conflict_streak + 1 if conflict_free_ep else 0
 
-        # Debug info for conflict detection
-        if it == 1:  # Only print for first iteration
-            print(f"Debug: conflict_free_ep={conflict_free_ep}, zero_conflict_streak={zero_conflict_streak}")
+        # Debug info for conflict detection (disabled)
+        # if it == 1:  # Only print for first iteration
+        #     print(f"Debug: conflict_free_ep={conflict_free_ep}, zero_conflict_streak={zero_conflict_streak}")
 
         # Extract additional metrics for visibility
         envr = result.get("env_runners", {}) or {}
@@ -294,9 +386,9 @@ def train_frozen(repo_root: str,
                     ep_data = df[df["episode_id"] == last_ep]
                     avg_min_sep = ep_data["min_separation_nm"].mean()
                     
-                    # Debug: print available columns
-                    if it == 1:  # Only print for first iteration
-                        print(f"Debug: CSV columns available: {list(df.columns)}")
+                    # Debug: print available columns (disabled)
+                    # if it == 1:  # Only print for first iteration
+                    #     print(f"Debug: CSV columns available: {list(df.columns)}")
                     
                     # Better waypoint hit calculation using waypoint_reached flag
                     if "waypoint_reached" in ep_data.columns:
@@ -304,24 +396,24 @@ def train_frozen(repo_root: str,
                         agents_reached = ep_data[ep_data["waypoint_reached"] == 1]["agent_id"].nunique()
                         wp_hits = agents_reached
                         
-                        # Additional debug info
-                        if it == 1:
-                            reached_flags = ep_data["waypoint_reached"].sum()
-                            print(f"Debug: waypoint_reached flags: {reached_flags}, unique agents reached: {wp_hits}")
+                        # Additional debug info (disabled)
+                        # if it == 1:
+                        #     reached_flags = ep_data["waypoint_reached"].sum()
+                        #     print(f"Debug: waypoint_reached flags: {reached_flags}, unique agents reached: {wp_hits}")
                     else:
                         # Fallback: count unique agents who were within 5 NM at any point
                         agents_near_wp = ep_data[ep_data["wp_dist_nm"] <= 5.0]["agent_id"].nunique()
                         wp_hits = agents_near_wp
-                        print(f"Debug: Using fallback wp_hits calculation: {wp_hits}")
+                        # print(f"Debug: Using fallback wp_hits calculation: {wp_hits}")
                     
                     rt_mean = float(ep_data.get("reward_team", pd.Series([0])).mean())
                     td_mean = float(ep_data.get("team_dphi", pd.Series([0])).mean())
                     print(f"Last episode {last_ep}: avg_min_sep={avg_min_sep:.2f}, wp_hits={wp_hits}, "
                           f"reward_team_mean={rt_mean:.6f}, team_dphi_mean={td_mean:.6f}")
                 else:
-                    print("Debug: No valid episode data found in trajectory file")
+                    pass  # print("Debug: No valid episode data found in trajectory file")
             else:
-                print(f"Debug: No trajectory files found in {results_dir}")
+                pass  # print(f"Debug: No trajectory files found in {results_dir}")
         except Exception as e:
             print(f"Warning: could not read trajectory files: {e}")
             import traceback
@@ -333,34 +425,38 @@ def train_frozen(repo_root: str,
 
         # Save checkpoint only when reward improves significantly (less negative = better)
         current_reward = float(rew if isinstance(rew, (int, float)) else float('-inf'))
-        improvement_threshold = 5.0  # Only save if reward improves by at least 50 points
+        improvement_threshold = 5.0  # Only save if reward improves by at least 5 points
         if current_reward > (best_reward + improvement_threshold):
             best_reward = current_reward
-            models_dir = os.path.join(results_dir, "models")
-            os.makedirs(models_dir, exist_ok=True)
-            ckpt = algo_obj.save(models_dir)
-            print(f"🎯 New best reward {current_reward:.1f}! Saved checkpoint: {getattr(ckpt, 'checkpoint', ckpt)}")
+            temp_models_dir = os.path.join(results_dir, "checkpoints")
+            os.makedirs(temp_models_dir, exist_ok=True)
+            ckpt = algo_obj.save(temp_models_dir)
+            checkpoint_name = f"{algo}_{scenario_base_name}_best_{timestamp}"
+            print(f"🎯 New best reward {current_reward:.1f}! Saved checkpoint: {checkpoint_name}")
         
         # Also save periodic backup every 100k steps
         ckpt_band = steps // checkpoint_every
-        models_dir = os.path.join(results_dir, "models")
-        os.makedirs(models_dir, exist_ok=True)
-        have_ckpts = len([f for f in os.listdir(models_dir) if f.startswith("periodic_")])
+        temp_models_dir = os.path.join(results_dir, "checkpoints")
+        os.makedirs(temp_models_dir, exist_ok=True)
+        have_ckpts = len([f for f in os.listdir(temp_models_dir) if f.startswith("periodic_")])
         if ckpt_band > have_ckpts:
-            ckpt = algo_obj.save(os.path.join(models_dir, f"periodic_{steps//1000}k"))
-            print(f"📁 Periodic backup: {getattr(ckpt, 'checkpoint', ckpt)}")
+            ckpt = algo_obj.save(os.path.join(temp_models_dir, f"periodic_{algo}_{scenario_base_name}_{steps//1000}k"))
+            print(f"📁 Periodic backup: {algo}_{scenario_base_name}_{steps//1000}k")
 
         if zero_conflict_streak >= 100:
             print("Early stop: 100 conflict-free episodes.")
             break
 
-    # Final save in timestamped directory
-    models_dir = os.path.join(results_dir, "models")
-    os.makedirs(models_dir, exist_ok=True)
-    ckpt = algo_obj.save(models_dir)
+    # Final save in main models directory with clean structure
+    final_models_dir = os.path.join(repo_root, "models", f"{algo}_{scenario_base_name}_{timestamp}")
+    os.makedirs(final_models_dir, exist_ok=True)
+    ckpt = algo_obj.save(final_models_dir)
     final_ckpt = ckpt if isinstance(ckpt, str) else str(ckpt)
-    print("Final checkpoint at:", final_ckpt)
-    print(f"All results saved in: {results_dir}")
+    final_checkpoint_name = f"{algo}_{scenario_base_name}_{timestamp}"
+    print(f"🏆 Final model saved at: ./models/{final_checkpoint_name}")
+    print(f"📊 Training results saved in: {results_dir}")
+    if use_gpu:
+        print(f"⚡ Training completed using GPU acceleration")
     return final_ckpt
 
 
@@ -375,6 +471,11 @@ if __name__ == "__main__":
     elif "SCENARIO" in os.environ:
         scenario_name = os.environ["SCENARIO"]
     
+    # Check for GPU flag from environment
+    use_gpu_env = os.environ.get("USE_GPU", "auto").lower()
+    use_gpu = None if use_gpu_env == "auto" else use_gpu_env in ["true", "1", "yes"]
+    
     print(f"Training with scenario: {scenario_name}")
-    ckpt = train_frozen(REPO, algo=os.environ.get("ALGO", "PPO"), scenario_name=scenario_name)
+    print(f"GPU mode: {use_gpu_env}")
+    ckpt = train_frozen(REPO, algo=os.environ.get("ALGO", "PPO"), scenario_name=scenario_name, use_gpu=use_gpu)
     print("Final checkpoint:", ckpt)

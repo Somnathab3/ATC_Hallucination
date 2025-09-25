@@ -244,24 +244,176 @@ def build_map(baseline_df, shifted_df=None, out_html="map.html"):
     m.save(out_html)
     return out_html
 
-def create_comparison_map(baseline_df, shifted_df, scenario_name="comparison", out_dir="maps"):
-    """
-    Create a comparison map showing baseline vs shifted trajectories.
+def add_start_end_waypoints(m, df, waypoints=None, label="markers"):
+    """Add start/end markers and waypoints to the map."""
+    layer = FeatureGroup(name=f"{label}", show=True)
     
-    Args:
-        baseline_df: Baseline trajectory DataFrame
-        shifted_df: Shifted trajectory DataFrame  
-        scenario_name: Name for the scenario
-        out_dir: Output directory for maps
-        
-    Returns:
-        str: Path to saved map
-    """
+    # Start/end per agent
+    for aid, g in df.groupby("agent_id"):
+        g = g.sort_values("step_idx")
+        if not g.empty:
+            s = g.iloc[0]; e = g.iloc[-1]
+            
+            # Start marker
+            folium.Marker(
+                [s.lat_deg, s.lon_deg],
+                tooltip=f"START {aid}",
+                icon=folium.Icon(color="green", icon="play")
+            ).add_to(layer)
+            
+            # End marker - different colors based on waypoint completion
+            end_color = "blue" if e.get("waypoint_reached", 0) == 1 else "red"
+            end_icon = "stop" if e.get("waypoint_reached", 0) == 1 else "pause"
+            
+            folium.Marker(
+                [e.lat_deg, e.lon_deg],
+                tooltip=f"END {aid} ({'WP reached' if end_color == 'blue' else 'In progress'})",
+                icon=folium.Icon(color=end_color, icon=end_icon)
+            ).add_to(layer)
+    
+    # Waypoints if provided
+    if waypoints:
+        for w in waypoints:
+            folium.Marker(
+                [w["lat_deg"], w["lon_deg"]],
+                tooltip=f"WPT {w['name']}",
+                icon=folium.Icon(color="purple", icon="flag")
+            ).add_to(layer)
+    
+    layer.add_to(m)
+
+
+def create_comparison_map(baseline_df, shifted_df, map_name, out_dir, waypoints=None):
+    """Create a comprehensive comparison map with baseline and shifted trajectories."""
+    m = make_basemap(baseline_df)
+    
+    # Add trajectory layers
+    add_trajectories(m, baseline_df, label="baseline")
+    if shifted_df is not None:
+        add_trajectories(m, shifted_df, label="shifted")
+    
+    # Add safety and analysis layers using shifted data if available
+    analysis_df = shifted_df if shifted_df is not None else baseline_df
+    add_safety_circles(m, analysis_df, sep_nm=5.0, every_n=5)
+    add_conflict_heatmap(m, analysis_df)
+    add_hallucination_markers(m, analysis_df)
+    add_time_heatmap(m, analysis_df)
+    
+    # Add start/end/waypoint markers
+    add_start_end_waypoints(m, baseline_df, waypoints=waypoints)
+    
+    # Add layer control
+    LayerControl(collapsed=False).add_to(m)
+    
+    # Save map
     import os
     os.makedirs(out_dir, exist_ok=True)
+    out_path = os.path.join(out_dir, f"{map_name}.html")
+    m.save(out_path)
+    return out_path
+
+
+def add_baseline_overlay(m, baseline_df, shifted_df, label="baseline vs shifted"):
+    """Add baseline trajectory overlay for comparison with shifted trajectories."""
+    if baseline_df is None or baseline_df.empty:
+        return
+        
+    # Baseline trajectories with dashed lines
+    baseline_layer = FeatureGroup(name=f"Baseline: {label}", show=True)
     
-    out_html = os.path.join(out_dir, f"comparison_{scenario_name}.html")
-    return build_map(baseline_df, shifted_df, out_html)
+    for aid, g in baseline_df.groupby("agent_id"):
+        pts = g.sort_values("step_idx")[["lat_deg", "lon_deg"]].values.tolist()
+        if len(pts) >= 2:
+            PolyLine(
+                pts, 
+                color=_color_for_agent(aid), 
+                weight=2, 
+                opacity=0.6,
+                dashArray="10, 10",  # Dashed line for baseline
+                tooltip=f"Baseline — {aid}"
+            ).add_to(baseline_layer)
+    
+    # Shifted trajectories with solid lines
+    shifted_layer = FeatureGroup(name=f"Shifted: {label}", show=True)
+    
+    for aid, g in shifted_df.groupby("agent_id"):
+        pts = g.sort_values("step_idx")[["lat_deg", "lon_deg"]].values.tolist()
+        if len(pts) >= 2:
+            PolyLine(
+                pts, 
+                color=_color_for_agent(aid), 
+                weight=3, 
+                opacity=0.8,
+                tooltip=f"Shifted — {aid}"
+            ).add_to(shifted_layer)
+    
+    baseline_layer.add_to(m)
+    shifted_layer.add_to(m)
+
+
+def create_enhanced_comparison_map(baseline_df, shifted_df, shift_info, out_dir):
+    """
+    Create an enhanced comparison map with baseline overlay and detailed shift information.
+    
+    Args:
+        baseline_df: DataFrame with baseline trajectory data
+        shifted_df: DataFrame with shifted trajectory data
+        shift_info: Dict with shift metadata (test_id, description, etc.)
+        out_dir: Output directory for the map
+        
+    Returns:
+        str: Path to saved HTML file
+    """
+    import os
+    
+    # Create base map
+    m = make_basemap(shifted_df if shifted_df is not None else baseline_df)
+    
+    # Add baseline overlay
+    if baseline_df is not None and not baseline_df.empty:
+        add_baseline_overlay(m, baseline_df, shifted_df, shift_info.get("description", "comparison"))
+    
+    # Add analysis layers for shifted data
+    if shifted_df is not None and not shifted_df.empty:
+        add_safety_circles(m, shifted_df, sep_nm=5.0, every_n=3)
+        add_conflict_heatmap(m, shifted_df, label="Shift conflict zones")
+        add_hallucination_markers(m, shifted_df, label="Shift hallucinations")
+        add_time_heatmap(m, shifted_df, label="Shift LoS over time")
+    
+    # Add start/end markers for both datasets
+    if baseline_df is not None and not baseline_df.empty:
+        add_start_end_waypoints(m, baseline_df, label="Baseline markers")
+    if shifted_df is not None and not shifted_df.empty:
+        add_start_end_waypoints(m, shifted_df, label="Shifted markers")
+    
+    # Add layer control
+    LayerControl(collapsed=False).add_to(m)
+    
+    # Add title to map using a different approach
+    title_html = f'''
+    <h3 align="center" style="font-size:20px"><b>{shift_info.get("description", "Trajectory Comparison")}</b></h3>
+    <p align="center">Test ID: {shift_info.get("test_id", "unknown")}<br>
+    Shift Type: {shift_info.get("shift_type", "unknown")} | 
+    Shift Value: {shift_info.get("shift_value", "N/A")}<br>
+    Target Agent: {shift_info.get("target_agent", "unknown")}</p>
+    '''
+    
+    # Add title as HTML element
+    try:
+        from folium import Element
+        title_element = Element(title_html)
+        m.get_root().add_child(title_element)
+    except Exception:
+        # Fallback: just save without title
+        pass
+    
+    # Save map
+    os.makedirs(out_dir, exist_ok=True)
+    map_filename = f"comparison_{shift_info.get('test_id', 'unknown')}.html"
+    out_path = os.path.join(out_dir, map_filename)
+    m.save(out_path)
+    
+    return out_path
 
 def create_baseline_vs_shifted_comparison(results_dir: str, scenario_name: str, out_dir: str = "trajectory_maps"):
     """
@@ -296,9 +448,13 @@ def create_baseline_vs_shifted_comparison(results_dir: str, scenario_name: str, 
         shift_path = os.path.join(shifts_dir, shift_dir_name)
         
         # Find CSV files in this shift directory
+        # Look for both old pattern (traj_ep_*.csv) and new pattern (traj_*_ep*.csv)
         csv_files = glob.glob(os.path.join(shift_path, "traj_ep_*.csv"))
+        if not csv_files:
+            csv_files = glob.glob(os.path.join(shift_path, "traj_*_ep*.csv"))
         
         if not csv_files:
+            print(f"Warning: No trajectory CSV files found in {shift_path}")
             continue
             
         # Load trajectory data

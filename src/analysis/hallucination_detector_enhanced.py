@@ -53,15 +53,22 @@ def compute_tcpa_dcpa_nm(lat_i, lon_i, vi_east_nms, vi_north_nms,
 
 
 class HallucinationDetector:
-    def __init__(self, horizon_s: float = 300.0, action_thresh=(3.0, 5.0),
-                 res_window_s: float = 60.0, action_period_s: float = 10.0,
-                 los_threshold_nm: float = 5.0):
-        self.horizon_s = float(horizon_s)
+    def __init__(self, horizon_s: float = 180.0, action_thresh=(3.0, 5.0),
+                 res_window_s: float = 90.0, action_period_s: float = 10.0,
+                 los_threshold_nm: float = 5.0, lag_pre_steps: int = 1,
+                 lag_post_steps: int = 1, debounce_n: int = 2, debounce_m: int = 3,
+                 iou_threshold: float = 0.1):
+        self.horizon_s = float(horizon_s)  # Reduced from 300 to 180 to reduce "always in future" flags
         self.theta_min_deg = float(action_thresh[0])
         self.v_min_kt = float(action_thresh[1])
-        self.res_window_s = float(res_window_s)
+        self.res_window_s = float(res_window_s)  # Increased to 90s for better resolution verification
         self.action_period_s = float(action_period_s)  # Should match environment timestep
         self.los_threshold_nm = float(los_threshold_nm)
+        self.lag_pre_steps = int(lag_pre_steps)
+        self.lag_post_steps = int(lag_post_steps)
+        self.debounce_n = int(debounce_n)  # 2-of-3 timesteps
+        self.debounce_m = int(debounce_m)
+        self.iou_threshold = float(iou_threshold)
 
     def _detect_los_events(self, pos_seq: List[Dict[str, Tuple[float, float]]]) -> Dict[str, Any]:
         """Detect Loss of Separation (LOS) events between aircraft pairs."""
@@ -190,9 +197,10 @@ class HallucinationDetector:
 
     def _alerts_from_actions(self, actions_seq: List[Dict[str, np.ndarray]], waypoint_status: Optional[Dict] = None) -> np.ndarray:
         T = len(actions_seq)
-        a = np.zeros(T, dtype=bool)
+        raw_alerts = np.zeros(T, dtype=bool)
         waypoint_status = waypoint_status or {}
         
+        # First pass: detect raw action threshold crossings
         for t in range(T):
             acts = actions_seq[t]
             for aid, arr in acts.items():
@@ -204,9 +212,27 @@ class HallucinationDetector:
                 dpsi = float(arr[0]) if arr.size > 0 else 0.0
                 dvkt = float(arr[1]) if arr.size > 1 else 0.0
                 if abs(dpsi) >= self.theta_min_deg or abs(dvkt) >= self.v_min_kt:
-                    a[t] = True
+                    raw_alerts[t] = True
                     break
-        return a
+        
+        # Apply debounce: 2-of-3 timesteps within sliding window
+        debounced = np.zeros(T, dtype=bool)
+        for t in range(T):
+            window_start = max(0, t - self.debounce_m + 1)
+            window_end = min(T, t + 1)
+            window_alerts = raw_alerts[window_start:window_end]
+            if np.sum(window_alerts) >= self.debounce_n:
+                debounced[t] = True
+        
+        # Apply pre/post lag expansion
+        final_alerts = np.zeros(T, dtype=bool)
+        for t in range(T):
+            if debounced[t]:
+                start = max(0, t - self.lag_pre_steps)
+                end = min(T, t + self.lag_post_steps + 1)
+                final_alerts[start:end] = True
+        
+        return final_alerts
 
     def _ground_truth_series(self, traj: Dict[str, Any], sep_nm: float, waypoint_status: Optional[Dict] = None) -> Tuple[np.ndarray, float, int]:
         """Return g[t] ∈ {0,1}, min CPA, and count of conflict timesteps, excluding agents who reached waypoints."""
@@ -254,13 +280,14 @@ class HallucinationDetector:
         
         num_conflict_steps = int(g.sum())
         
-        # Debug output
-        if total_exclusions > 0:
-            print(f"DEBUG: Excluded {total_exclusions} agent-timesteps due to waypoint completion")
+        # Debug output (disabled during training)
+        # if total_exclusions > 0:
+        #     print(f"DEBUG: Excluded {total_exclusions} agent-timesteps due to waypoint completion")
         
         return g, min_cpa, num_conflict_steps
 
-    def _merge_runs(self, b: np.ndarray):
+    def _merge_runs(self, b: np.ndarray, expand_steps: int = 0):
+        """Merge consecutive True values in boolean array into runs, optionally expanding each run."""
         runs = []
         T = len(b)
         i = 0
@@ -269,11 +296,111 @@ class HallucinationDetector:
                 j = i + 1
                 while j < T and b[j]:
                     j += 1
-                runs.append((i, j))
+                # Expand run by expand_steps in both directions
+                start = max(0, i - expand_steps)
+                end = min(T, j + expand_steps)
+                runs.append((start, end))
                 i = j
             else:
                 i += 1
         return runs
+
+    def _compute_iou(self, run1: Tuple[int, int], run2: Tuple[int, int]) -> float:
+        """Compute Intersection over Union (IoU) for two time intervals."""
+        start1, end1 = run1
+        start2, end2 = run2
+        
+        # Intersection
+        intersection_start = max(start1, start2)
+        intersection_end = min(end1, end2)
+        intersection_length = max(0, intersection_end - intersection_start)
+        
+        # Union
+        union_start = min(start1, start2)
+        union_end = max(end1, end2)
+        union_length = union_end - union_start
+        
+        if union_length == 0:
+            return 0.0
+        
+        return float(intersection_length) / float(union_length)
+
+    def _match_windows(self, G: List[Tuple[int, int]], A: List[Tuple[int, int]], 
+                       iou_threshold: float = 0.1) -> Tuple[List[Tuple[int, int]], set]:
+        """Match ground truth windows G with alert windows A using IoU threshold.
+        
+        Returns:
+            matches: List of (G_idx, A_idx) pairs
+            used_A: Set of A indices that were matched
+        """
+        matches = []
+        used_A = set()
+        
+        # Greedy matching: for each G window, find best A window by IoU
+        for g_idx, g_window in enumerate(G):
+            best_iou = 0.0
+            best_a_idx = -1
+            
+            for a_idx, a_window in enumerate(A):
+                if a_idx in used_A:
+                    continue
+                    
+                iou = self._compute_iou(g_window, a_window)
+                if iou >= iou_threshold and iou > best_iou:
+                    best_iou = iou
+                    best_a_idx = a_idx
+            
+            if best_a_idx >= 0:
+                matches.append((g_idx, best_a_idx))
+                used_A.add(best_a_idx)
+        
+        return matches, used_A
+
+    def _min_hmd_series(self, pos_seq: List[Dict[str, Tuple[float, float]]]) -> np.ndarray:
+        """Compute per-step minimum horizontal miss distance series."""
+        T = len(pos_seq)
+        per_step_min_sep = np.zeros(T, dtype=float)
+        
+        for t in range(T):
+            step = pos_seq[t]
+            aids = list(step.keys())
+            min_sep = float("inf")
+            
+            for i in range(len(aids)):
+                for j in range(i+1, len(aids)):
+                    lat_i, lon_i = step[aids[i]]
+                    lat_j, lon_j = step[aids[j]]
+                    d = haversine_nm(lat_i, lon_i, lat_j, lon_j)
+                    min_sep = min(min_sep, d)
+            
+            per_step_min_sep[t] = 0.0 if min_sep == float("inf") else float(min_sep)
+        
+        return per_step_min_sep
+
+    def _resolution_cm(self, trajectory: Dict[str, Any], G: List[Tuple[int, int]], 
+                       matches: List[Tuple[int, int]], d_sep_nm: float, window_s: float) -> Dict[str, int]:
+        """Compute resolution success/failure for matched conflict windows."""
+        pos_seq = trajectory.get("positions", [])
+        T = len(pos_seq)
+        window_steps = int(round(window_s / max(1e-6, self.action_period_s)))
+        
+        tp_res = 0
+        fn_res = 0
+        
+        for g_idx, a_idx in matches:
+            g_start, g_end = G[g_idx]
+            # Check resolution in window after conflict end
+            check_start = g_end
+            check_end = min(T, g_end + window_steps)
+            
+            if check_start < T:
+                min_hmd = self._min_hmd_window(pos_seq[check_start:check_end])
+                if min_hmd > d_sep_nm:
+                    tp_res += 1
+                else:
+                    fn_res += 1
+        
+        return {"tp_res": tp_res, "fn_res": fn_res}
 
     def _min_hmd_window(self, window_steps: List[Dict[str, Tuple[float, float]]]) -> float:
         """Minimum horizontal miss distance within a window of position dicts."""
@@ -302,7 +429,9 @@ class HallucinationDetector:
                     "num_los_events": 0, "total_los_duration": 0,
                     "min_separation_nm": 0.0, "total_path_length_nm": 0.0,
                     "avg_path_length_nm": 0.0, "flight_time_s": 0.0,
-                    "path_efficiency": 0.0, "waypoint_reached_ratio": 0.0}
+                    "path_efficiency": 0.0, "waypoint_reached_ratio": 0.0,
+                    "unwanted_interventions": 0, "excess_alert_time_s": 0.0,
+                    "avg_lead_time_s": 0.0}
         
         T = min(len(pos_seq), len(actions_seq))
         if T == 0:
@@ -312,7 +441,9 @@ class HallucinationDetector:
                     "num_los_events": 0, "total_los_duration": 0,
                     "min_separation_nm": 0.0, "total_path_length_nm": 0.0,
                     "avg_path_length_nm": 0.0, "flight_time_s": 0.0,
-                    "path_efficiency": 0.0, "waypoint_reached_ratio": 0.0}
+                    "path_efficiency": 0.0, "waypoint_reached_ratio": 0.0,
+                    "unwanted_interventions": 0, "excess_alert_time_s": 0.0,
+                    "avg_lead_time_s": 0.0}
 
         # Get waypoint status from trajectory metadata if available
         waypoint_status = trajectory.get("waypoint_status", {})
@@ -320,34 +451,46 @@ class HallucinationDetector:
         g, min_cpa, num_conflict_steps = self._ground_truth_series(trajectory, sep_nm, waypoint_status)
         a = self._alerts_from_actions(actions_seq, waypoint_status)
 
-        # Confusion at timestep level
-        TP_mask = a & g
-        FP_mask = a & ~g
-        FN_mask = ~a & g
-        TN_mask = ~a & ~g
+        # Event windows and IoU matching
+        expand_gt_steps = int(30.0 / self.action_period_s)  # ±30s for ground truth
+        expand_alert_steps = int(10.0 / self.action_period_s)  # ±10s for alerts
         
-        TP = int(np.sum(TP_mask))
-        FP = int(np.sum(FP_mask))
-        FN = int(np.sum(FN_mask))
-        TN = int(np.sum(TN_mask))
+        G = self._merge_runs(g, expand_steps=expand_gt_steps)
+        A = self._merge_runs(a, expand_steps=expand_alert_steps)
+        
+        matches, used_A = self._match_windows(G, A, iou_threshold=self.iou_threshold)
 
-        ghost = FP / max(1, FP + TN)
-        missed = FN / max(1, FN + TP)
+        # Event-based confusion matrix
+        TP = len(matches)
+        FN = len(G) - TP
+        FP = len(A) - len(used_A)
+        TN_steps = int(np.sum(~g & ~a))
+        TN_pct = float(TN_steps) / max(1, T)
 
-        # Resolution metric: after any alert, did min HMD exceed sep within 60s?
-        G = self._merge_runs(g)
-        A = self._merge_runs(a)
+        # Calculate traditional rates for backward compatibility
+        ghost = FP / max(1, FP + TN_steps) if (FP + TN_steps) > 0 else 0.0
+        missed = FN / max(1, FN + TP) if (FN + TP) > 0 else 0.0
 
-        w = int(round(self.res_window_s / max(1e-6, self.action_period_s)))
-        tp_res = fn_res = 0
-        for (s, e) in A:
-            end = min(T, e + w)
-            m = self._min_hmd_window(pos_seq[e:end])
-            if m > sep_nm:
-                tp_res += 1
-            else:
-                fn_res += 1
-        res_fail_rate = fn_res / max(1, tp_res + fn_res)
+        # Resolution efficiency using matched windows
+        res_metrics = self._resolution_cm(trajectory, G, matches, d_sep_nm=sep_nm, window_s=self.res_window_s)
+        res_fail_rate = res_metrics["fn_res"] / max(1, res_metrics["tp_res"] + res_metrics["fn_res"])
+
+        # Unwanted interventions: alerts that never matched any conflict
+        unwanted_interventions = len(A) - len(used_A)
+        excess_alert_time = 0.0
+        for a_idx, (start, end) in enumerate(A):
+            if a_idx not in used_A:
+                excess_alert_time += (end - start) * self.action_period_s
+
+        # Lead time analysis for matched windows
+        lead_times = []
+        for g_idx, a_idx in matches:
+            g_start, _ = G[g_idx]
+            a_start, _ = A[a_idx]
+            lead_time_s = (a_start - g_start) * self.action_period_s
+            lead_times.append(lead_time_s)
+        
+        avg_lead_time = float(np.mean(lead_times)) if lead_times else 0.0
 
         # Action oscillation: fraction of timesteps where heading command flips sign (per episode, max over agents)
         flips = 0
@@ -371,13 +514,17 @@ class HallucinationDetector:
 
         # Combine all metrics
         result = {
-            "tp": TP, "fp": FP, "fn": FN, "tn": TN,
+            "tp": TP, "fp": FP, "fn": FN, "tn": TN_steps,
+            "tn_pct": TN_pct,
             "ghost_conflict": float(ghost),
             "missed_conflict": float(missed),
             "resolution_fail_rate": float(res_fail_rate),
             "oscillation_rate": float(oscillation_rate),
             "min_CPA_nm": float(min_cpa),
             "num_conflict_steps": int(num_conflict_steps),
+            "unwanted_interventions": int(unwanted_interventions),
+            "excess_alert_time_s": float(excess_alert_time),
+            "avg_lead_time_s": float(avg_lead_time),
         }
         
         # Add LOS metrics
@@ -388,31 +535,23 @@ class HallucinationDetector:
         
         # Optionally return per-step series (for visualization)
         if return_series:
-            # per-step min separation (HMD) for overlay
-            per_step_min_sep = np.zeros(T, dtype=float)
-            for t in range(T):
-                step = pos_seq[t]
-                aids = list(step.keys())
-                m = float('inf')
-                for i in range(len(aids)):
-                    for j in range(i+1, len(aids)):
-                        lat_i, lon_i = step[aids[i]]
-                        lat_j, lon_j = step[aids[j]]
-                        d = haversine_nm(lat_i, lon_i, lat_j, lon_j)
-                        if d < m: m = d
-                per_step_min_sep[t] = (m if m < float('inf') else 0.0)
+            # Per-step masks for visualization
+            TP_mask = a & g
+            FP_mask = a & ~g
+            FN_mask = ~a & g
+            TN_mask = ~a & ~g
+            
+            # Per-step min separation for overlays
+            per_step_min_sep = self._min_hmd_series(pos_seq)
 
-            return {
-                **result,  # existing episode-level dict
-                "series": {
-                    "gt_conflict": g.astype(int).tolist(),
-                    "alert": a.astype(int).tolist(),
-                    "tp": TP_mask.astype(int).tolist(),
-                    "fp": FP_mask.astype(int).tolist(),
-                    "fn": FN_mask.astype(int).tolist(),
-                    "tn": TN_mask.astype(int).tolist(),
-                    "min_sep_nm": per_step_min_sep.tolist()
-                }
+            result["series"] = {
+                "gt_conflict": g.astype(int).tolist(),
+                "alert": a.astype(int).tolist(),
+                "tp": TP_mask.astype(int).tolist(),
+                "fp": FP_mask.astype(int).tolist(),
+                "fn": FN_mask.astype(int).tolist(),
+                "tn": TN_mask.astype(int).tolist(),
+                "min_separation_nm": per_step_min_sep.tolist(),
             }
         
         return result
