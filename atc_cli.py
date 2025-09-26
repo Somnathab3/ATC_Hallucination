@@ -127,7 +127,7 @@ class ATCController:
             
             # Handle 'all' algorithms
             if algo.lower() == "all":
-                algorithms = ["PPO", "SAC"]
+                algorithms = ["PPO", "SAC", "IMPALA", "CQL", "APPO"]
             else:
                 algorithms = [algo]
             
@@ -623,7 +623,7 @@ def main():
     train_parser.add_argument("--scenario", "-s", action="append",
                              help="Scenario to train on (can be used multiple times, or use 'all' for all scenarios)")
     train_parser.add_argument("--algo", "-a", type=str, default="PPO",
-                             help="Algorithm to use (PPO, SAC, or 'all' for both)")
+                             help="Algorithm to use (PPO, SAC, IMPALA, CQL, APPO, or 'all' for all algorithms)")
     train_parser.add_argument("--timesteps", "-t", type=int, default=100000,
                              help="Number of training timesteps")
     train_parser.add_argument("--checkpoint-every", "-c", type=int,
