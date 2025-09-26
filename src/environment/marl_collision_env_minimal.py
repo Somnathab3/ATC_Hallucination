@@ -29,24 +29,23 @@ DEFAULT_TEAM_COORDINATION_WEIGHT      = 0.2
 DEFAULT_TEAM_GAMMA                    = 0.99
 DEFAULT_TEAM_SHARE_MODE               = "responsibility"   # "even" | "responsibility" | "neighbor"
 DEFAULT_TEAM_EMA                      = 0.001
-DEFAULT_TEAM_CAP                      = 0.005
+DEFAULT_TEAM_CAP                      = 0.01
 DEFAULT_TEAM_ANNEAL                   = 1.0
 DEFAULT_TEAM_NEIGHBOR_THRESHOLD_KM    = 10.0
-TEAM_DC_CAP_NM                        = 10.0   # d_cap for Φ(s) normalization
 
 # ---- Individual reward defaults (rebalanced) ----
-DEFAULT_DRIFT_PENALTY_PER_SEC         = -0.01
+DEFAULT_DRIFT_PENALTY_PER_SEC         = -0.1
 DEFAULT_PROGRESS_REWARD_PER_KM        =  0.02
-DEFAULT_BACKTRACK_PENALTY_PER_KM      = -0.02
+DEFAULT_BACKTRACK_PENALTY_PER_KM      = -0.1
 DEFAULT_TIME_PENALTY_PER_SEC          = -0.0005
-DEFAULT_REACH_REWARD                  = 50.0      # meaningful waypoint completion
-DEFAULT_HEADING_ALIGN_PER_SEC         =  0.001
+DEFAULT_REACH_REWARD                  = 10.0      # meaningful waypoint completion
 DEFAULT_INTRUSION_PENALTY             = -50.0
 DEFAULT_CONFLICT_DWELL_PENALTY_PER_SEC= -0.1
 
 # Geometry/normalization constants
 NM_TO_KM = 1.852
 DRIFT_NORM_DEN = 180.0                 # scale |drift| (deg) to [0..1]
+WAYPOINT_THRESHOLD_NM = 1.0            # Distance threshold for waypoint completion (changed from 5.0 to 1.0)
 
 
 def kt_to_nms(kt):
@@ -161,6 +160,7 @@ class MARLCollisionEnv(ParallelEnv):
         self._traj_rows = []  # Enhanced trajectory logging
         self._separation_threshold_nm = float(env_config.get("separation_nm", 5.0))  # NM for conflict detection
         self.log_trajectories = env_config.get("log_trajectories", True)
+        self.episode_tag = env_config.get("episode_tag", None)  # Optional episode tag for CSV naming
         
         # Observation mode configuration (BEFORE space creation)
         self.obs_mode          = str(env_config.get("obs_mode", "relative")).lower()  # "relative" | "absolute"
@@ -183,17 +183,20 @@ class MARLCollisionEnv(ParallelEnv):
         self.r_back_per_km     = float(env_config.get("backtrack_penalty_per_km", DEFAULT_BACKTRACK_PENALTY_PER_KM))
         self.r_time_per_s      = float(env_config.get("time_penalty_per_sec", DEFAULT_TIME_PENALTY_PER_SEC))
         self.r_reach_bonus     = float(env_config.get("reach_reward", DEFAULT_REACH_REWARD))
-        self.r_align_per_s     = float(env_config.get("heading_align_per_sec", DEFAULT_HEADING_ALIGN_PER_SEC))
         self.r_intrusion       = float(env_config.get("intrusion_penalty", DEFAULT_INTRUSION_PENALTY))
         self.r_dwell_per_s     = float(env_config.get("conflict_dwell_penalty_per_sec", DEFAULT_CONFLICT_DWELL_PENALTY_PER_SEC))
-        self.action_cost_per_unit = float(env_config.get("action_cost_per_unit", -0.001))
+        self.action_cost_per_unit = float(env_config.get("action_cost_per_unit", -0.01))
         self.terminal_not_reached_penalty = float(env_config.get("terminal_not_reached_penalty", -10.0))
         
         # Per-episode memory
         self._prev_wp_dist_nm: Dict[str, Optional[float]] = {aid: None for aid in self.possible_agents}
         self._conflict_on_prev = {aid: 0 for aid in self.possible_agents}
         self._waypoint_hits = {aid: 0 for aid in self.possible_agents}  # Track cumulative waypoint completions
+        self._agents_to_stop_logging = set()  # Track agents that should no longer be logged
         self._waypoint_reached = {aid: False for aid in self.possible_agents}  # Track if agent has reached waypoint this episode
+        self._waypoint_reached_this_step = {aid: False for aid in self.possible_agents}  # Track if agent reached waypoint THIS step
+        self._agent_done = {aid: False for aid in self.possible_agents}  # Track if agent is completely done
+        self._agent_wpreached = {aid: False for aid in self.possible_agents}  # Persistent waypoint reached flag
 
         # Baselines captured from the scenario (per agent)
         self._base_cas_kt = {aid: 250.0 for aid in self.possible_agents}  # overwritten on reset
@@ -239,6 +242,31 @@ class MARLCollisionEnv(ParallelEnv):
 
         # Set results directory (can be overridden by trainer)
         self.results_dir = env_config.get("results_dir", "results")
+        
+        # Initialize real-time hallucination detection
+        self._enable_hallucination_detection = env_config.get("enable_hallucination_detection", True)
+        if self._enable_hallucination_detection:
+            # Import here to avoid circular imports
+            try:
+                from src.analysis.hallucination_detector_enhanced import HallucinationDetector
+                self._hallucination_detector = HallucinationDetector(
+                    action_period_s=10.0,  # Match environment timestep
+                    res_window_s=60.0,
+                    horizon_s=300.0,
+                    action_thresh=(3.0, 5.0)  # deg, kt thresholds
+                )
+                # Store trajectory data for real-time analysis
+                self._rt_trajectory = {
+                    "positions": [],
+                    "actions": [],
+                    "agents": {aid: {"headings": [], "speeds": []} for aid in self.possible_agents},
+                    "waypoint_status": {aid: {} for aid in self.possible_agents}
+                }
+            except ImportError:
+                self._enable_hallucination_detection = False
+                self._hallucination_detector = None
+        else:
+            self._hallucination_detector = None
 
         # Required PettingZoo attributes
         self.agent_selection = None
@@ -346,6 +374,9 @@ class MARLCollisionEnv(ParallelEnv):
                 lat += float(agent_shifts.get("position_lat_delta", 0.0))
                 lon += float(agent_shifts.get("position_lon_delta", 0.0))
                 
+                # Aircraft type shift - override default aircraft type if specified
+                actype = agent_shifts.get("aircraft_type", actype)
+                
                 # Legacy position shift along track (for backward compatibility)
                 pos_delta = float(agent_shifts.get("position_nm_delta", 0.0))
                 if pos_delta != 0.0:
@@ -388,6 +419,13 @@ class MARLCollisionEnv(ParallelEnv):
             
             wpt = agent.get("waypoint", {})
             wlat, wlon = float(wpt["lat"]), float(wpt["lon"])
+            
+            # Apply waypoint shifts if specified in targeted_shift
+            if aid in targeted_shift:
+                agent_shifts = targeted_shift[aid]
+                wlat += float(agent_shifts.get("waypoint_lat_delta", 0.0))
+                wlon += float(agent_shifts.get("waypoint_lon_delta", 0.0))
+            
             self._agent_waypoints[aid] = (wlat, wlon)
             bs.stack.stack(f"ADDWPT {aid} {wlat:.6f} {wlon:.6f}")
 
@@ -399,7 +437,20 @@ class MARLCollisionEnv(ParallelEnv):
         self._team_dphi_ema = 0.0
         self._prev_wp_dist_nm = {aid: None for aid in self.possible_agents}
         self._waypoint_hits = {aid: 0 for aid in self.possible_agents}  # Reset waypoint hit counters
+        self._agents_to_stop_logging = set()  # Reset agents to stop logging
         self._waypoint_reached = {aid: False for aid in self.possible_agents}  # Reset waypoint reached flags
+        self._waypoint_reached_this_step = {aid: False for aid in self.possible_agents}  # Reset this-step flags
+        self._agent_done = {aid: False for aid in self.possible_agents}  # Reset agent done flags
+        self._agent_wpreached = {aid: False for aid in self.possible_agents}  # Reset persistent waypoint flags
+        
+        # Reset real-time hallucination detection
+        if self._enable_hallucination_detection and self._hallucination_detector:
+            self._rt_trajectory = {
+                "positions": [],
+                "actions": [],
+                "agents": {aid: {"headings": [], "speeds": []} for aid in self.possible_agents},
+                "waypoint_status": {aid: {} for aid in self.possible_agents}
+            }
         
         infos = {aid: {} for aid in self.agents}
         return obs, infos
@@ -493,6 +544,9 @@ class MARLCollisionEnv(ParallelEnv):
         pairwise_dist_nm: Dict[str, Dict[str, float]] = {aid: {} for aid in self.agents}
         conflict_pairs_count = 0
         
+        # Reset this-step waypoint tracking
+        self._waypoint_reached_this_step = {aid: False for aid in self.possible_agents}
+        
         # Track if any pair is inside collision band this step
         any_collision_this_step = False
         
@@ -515,14 +569,25 @@ class MARLCollisionEnv(ParallelEnv):
             dist_wp_nm = haversine_nm(lat_i, lon_i, wpt[0], wpt[1])
             dist_wp_nm_by_agent[aid_i] = float(dist_wp_nm)
             
-            # Check if agent reaches waypoint (within 5 NM)
-            if dist_wp_nm <= 5.0:
+            # Check if agent reaches waypoint (within 1 NM) - use persistent tracking
+            if not self._agent_wpreached[aid_i] and dist_wp_nm <= WAYPOINT_THRESHOLD_NM:
+                self._agent_wpreached[aid_i] = True
                 reached_wp[aid_i] = 1
-                # Track persistent waypoint completion (only count once per episode)
-                if not self._waypoint_reached[aid_i]:
-                    first_time_reach[aid_i] = True  # Mark as first-time reach
-                    self._waypoint_reached[aid_i] = True
-                    self._waypoint_hits[aid_i] += 1
+                self._waypoint_reached_this_step[aid_i] = True  # Mark as reached this step
+                first_time_reach[aid_i] = True  # Mark as first-time reach
+                self._waypoint_reached[aid_i] = True
+                self._waypoint_hits[aid_i] = 1  # Individual agent hit count (0 or 1)
+                # NOTE: Don't mark as done yet - let this step be logged first
+            elif self._agent_wpreached[aid_i]:
+                # Agent has already reached waypoint
+                reached_wp[aid_i] = 1
+                self._waypoint_reached[aid_i] = True
+                self._waypoint_hits[aid_i] = 1  # Keep individual count at 1
+                
+            # Debug waypoint status every 10 steps
+            if self._step_idx % 10 == 0 and aid_i == self.agents[0]:  # Only for first agent to avoid spam
+                active_agents = [aid for aid in self.agents if not self._agent_done.get(aid, False)]
+                done_agents = [aid for aid in self.agents if self._agent_done.get(aid, False)]
 
             # Pairwise separation
             for j, aid_j in enumerate(self.agents):
@@ -622,7 +687,6 @@ class MARLCollisionEnv(ParallelEnv):
                     while drift > 180: drift -= 360
                     while drift < -180: drift += 360
                     r_drift = self.r_drift_per_s * dt * abs(drift) / DRIFT_NORM_DEN  # Enable drift penalty
-                    r_align = self.r_align_per_s * math.cos(math.radians(drift)) * dt
                     
                     # 3) Time penalty (per sec)
                     r_time = self.r_time_per_s * dt
@@ -653,7 +717,7 @@ class MARLCollisionEnv(ParallelEnv):
                         los_penalty +  # disabled (set to 0) to avoid double-counting
                         r_intr + r_dwell +
                         r_progress + r_backtrack +
-                        r_align + r_drift +  # alignment reward and drift penalty
+                        r_drift +  # drift penalty
                         act_cost +     # action cost based on normalized actions
                         r_time +
                         r_reach +
@@ -666,7 +730,6 @@ class MARLCollisionEnv(ParallelEnv):
                         "progress": float(r_progress),
                         "backtrack": float(r_backtrack),
                         "drift": float(r_drift),
-                        "align": float(r_align),
                         "time": float(r_time),
                         "dwell": float(r_dwell),
                         "intrusion": float(r_intr),
@@ -739,7 +802,8 @@ class MARLCollisionEnv(ParallelEnv):
 
         # Enhanced infos with reward breakdown
         infos = {}
-        total_waypoint_hits = sum(self._waypoint_hits.values())
+        # Calculate total cumulative waypoint hits (number of agents who have reached waypoints)
+        total_waypoint_hits = sum(1 for aid in self.agents if self._waypoint_reached.get(aid, False))
         for aid in self.agents:
             # Calculate per-agent minimum separation
             agent_min_sep = 200.0  # default
@@ -759,11 +823,21 @@ class MARLCollisionEnv(ParallelEnv):
                 "total_waypoint_hits": total_waypoint_hits
             }
 
+        # Update real-time trajectory for hallucination detection
+        if self._enable_hallucination_detection and self._hallucination_detector:
+            self._update_rt_trajectory(normalized_actions)
+        
         # Enhanced trajectory logging
         if self.log_trajectories:
             self._log_step(conflict_flags, collision_flags, 
                           rewards, pairwise_dist_nm, dist_wp_nm_by_agent, 
-                          conflict_pairs_count, reward_parts_by_agent)
+                          conflict_pairs_count, reward_parts_by_agent, first_time_reach)
+
+        # Mark agents as done AFTER logging their waypoint completion step
+        for aid in self.agents:
+            if self._agent_wpreached.get(aid, False) and not self._agent_done.get(aid, False):
+                self._agent_done[aid] = True
+                self._agents_to_stop_logging.add(aid)
 
         # End episode when termination conditions are met
         if episode_complete:
@@ -794,8 +868,8 @@ class MARLCollisionEnv(ParallelEnv):
         
         # Calculate distance to waypoint and normalize
         wp_d_nm = haversine_nm(float(bs.traf.lat[idx]), float(bs.traf.lon[idx]), wlat, wlon)
-        # Normalize distance around the 5 NM capture radius -> [-1, 1]
-        wp_dist_norm = np.array([np.clip((wp_d_nm - 5.0)/5.0, -1.0, 1.0)], np.float32)
+        # Normalize distance around the 1 NM capture radius -> [-1, 1]
+        wp_dist_norm = np.array([np.clip((wp_d_nm - WAYPOINT_THRESHOLD_NM)/WAYPOINT_THRESHOLD_NM, -1.0, 1.0)], np.float32)
         
         try:
             hdg_array = getattr(bs.traf, 'hdg', None)
@@ -882,6 +956,59 @@ class MARLCollisionEnv(ParallelEnv):
             "vx_r":      vx_r, "vy_r": vy_r,
         }
 
+    def _update_rt_trajectory(self, actions: Dict[str, np.ndarray]):
+        """Update real-time trajectory data for hallucination detection."""
+        if not self._enable_hallucination_detection or not self._hallucination_detector:
+            return
+            
+        # Capture current positions
+        positions = {}
+        for aid in self.agents:
+            idx = bs.traf.id2idx(aid)
+            if isinstance(idx, int) and idx >= 0:
+                try:
+                    lat = float(bs.traf.lat[idx])
+                    lon = float(bs.traf.lon[idx])
+                    positions[aid] = (lat, lon)
+                    
+                    # Capture headings and speeds
+                    hdg = float(getattr(bs.traf, 'hdg', [0])[idx] if hasattr(bs.traf, 'hdg') else 0)
+                    tas_ms = float(getattr(bs.traf, 'tas', [150])[idx] if hasattr(bs.traf, 'tas') else 150)
+                    tas_kt = tas_ms * 1.94384  # Convert to knots
+                    
+                    self._rt_trajectory["agents"][aid]["headings"].append(hdg)
+                    self._rt_trajectory["agents"][aid]["speeds"].append(tas_kt)
+                    
+                except (IndexError, TypeError, AttributeError):
+                    positions[aid] = (0.0, 0.0)
+                    self._rt_trajectory["agents"][aid]["headings"].append(0.0)
+                    self._rt_trajectory["agents"][aid]["speeds"].append(250.0)
+            else:
+                positions[aid] = (0.0, 0.0)
+                self._rt_trajectory["agents"][aid]["headings"].append(0.0)
+                self._rt_trajectory["agents"][aid]["speeds"].append(250.0)
+        
+        self._rt_trajectory["positions"].append(positions)
+        
+        # Capture actions (convert from normalized to deg/kt deltas)
+        action_step = {}
+        for aid in self.agents:
+            if aid in actions:
+                # Convert normalized actions to actual deltas
+                a = actions[aid]
+                dh = float(a[0]) * D_HEADING  # degrees
+                dv = float(a[1]) * D_VELOCITY  # knots
+                action_step[aid] = [dh, dv]
+            else:
+                action_step[aid] = [0.0, 0.0]
+        
+        self._rt_trajectory["actions"].append(action_step)
+        
+        # Update waypoint status
+        for aid in self.agents:
+            step_idx = len(self._rt_trajectory["positions"]) - 1
+            self._rt_trajectory["waypoint_status"][aid][step_idx] = self._agent_wpreached.get(aid, False)
+
     def _collect_observations(self) -> Dict[str, np.ndarray]:
         """Build observations based on obs_mode."""
         obs = {}
@@ -961,12 +1088,49 @@ class MARLCollisionEnv(ParallelEnv):
                   collision_flags: Dict[str, int], rewards: Dict[str, float],
                   pairwise_dist_nm: Dict[str, Dict[str, float]], 
                   dist_wp_nm_by_agent: Dict[str, float], conflict_pairs_count: int,
-                  reward_parts_by_agent: Dict[str, dict]):
-        """Append step trace rows for all agents with enhanced data."""
+                  reward_parts_by_agent: Dict[str, dict], first_time_reach: Dict[str, bool]):
+        """Append step trace rows for all agents with enhanced data including real-time hallucination detection."""        
+        # Compute real-time hallucination metrics if enabled
+        rt_hallucination_data = {}
+        if (self._enable_hallucination_detection and self._hallucination_detector and 
+            len(self._rt_trajectory["positions"]) >= 2):  # Need at least 2 steps for detection
+            try:
+                # Run hallucination detection on current trajectory
+                cm = self._hallucination_detector.compute(
+                    self._rt_trajectory, 
+                    sep_nm=self._separation_threshold_nm, 
+                    return_series=True
+                )
+                series_data = cm.get("series", {})
+                
+                # Get current step index (0-based)
+                current_step = len(self._rt_trajectory["positions"]) - 1
+                if (current_step < len(series_data.get("gt_conflict", [])) and 
+                    current_step < len(series_data.get("alert", []))):
+                    rt_hallucination_data = {
+                        "gt_conflict": series_data["gt_conflict"][current_step],
+                        "predicted_alert": series_data["alert"][current_step],
+                        "tp": series_data["tp"][current_step],
+                        "fp": series_data["fp"][current_step],
+                        "fn": series_data["fn"][current_step],
+                        "tn": series_data["tn"][current_step]
+                    }
+            except Exception as e:
+                # Fallback if detection fails
+                self._logger.debug(f"Real-time hallucination detection failed: {e}")
+                rt_hallucination_data = {
+                    "gt_conflict": 0, "predicted_alert": 0, "tp": 0, "fp": 0, "fn": 0, "tn": 0
+                }
+        
         # Stable order for distance columns
         all_ids = list(self.possible_agents)
         
         for aid in self.agents:
+            # Skip logging for agents that are done (reached waypoint in previous steps)
+            if self._agent_done.get(aid, False):
+                if self._step_idx % 20 == 0:  # Debug every 20 steps to avoid spam
+                    pass  # Silent skip
+                continue
             idx = bs.traf.id2idx(aid)
             
             # Basic state data
@@ -1028,7 +1192,6 @@ class MARLCollisionEnv(ParallelEnv):
                 "reward_progress": parts.get("progress", 0.0),
                 "reward_backtrack": parts.get("backtrack", 0.0),
                 "reward_drift": parts.get("drift", 0.0),
-                "reward_align": parts.get("align", 0.0),
                 "reward_time": parts.get("time", 0.0),
                 "reward_dwell": parts.get("dwell", 0.0),
                 "reward_intrusion": parts.get("intrusion", 0.0),
@@ -1038,6 +1201,22 @@ class MARLCollisionEnv(ParallelEnv):
                 "team_phi": parts.get("team_phi", 0.0),
                 "team_dphi": parts.get("team_dphi", 0.0),
             })
+            
+            # Add real-time hallucination detection results (same for all agents at this timestep)
+            if rt_hallucination_data:
+                row.update({
+                    "gt_conflict": rt_hallucination_data.get("gt_conflict", 0),
+                    "predicted_alert": rt_hallucination_data.get("predicted_alert", 0),
+                    "tp": rt_hallucination_data.get("tp", 0),
+                    "fp": rt_hallucination_data.get("fp", 0),
+                    "fn": rt_hallucination_data.get("fn", 0),
+                    "tn": rt_hallucination_data.get("tn", 0)
+                })
+            else:
+                # Default values if detection is disabled or failed
+                row.update({
+                    "gt_conflict": 0, "predicted_alert": 0, "tp": 0, "fp": 0, "fn": 0, "tn": 0
+                })
             
             self._traj_rows.append(row)
     
@@ -1053,7 +1232,12 @@ class MARLCollisionEnv(ParallelEnv):
         if not os.path.isabs(results_dir):
             results_dir = os.path.join(os.path.dirname(__file__), "..", "..", results_dir)
         
-        traj_path = os.path.join(results_dir, f"traj_ep_{self._episode_id:04d}.csv")
+        # Use episode_tag from config if available, otherwise use episode_id
+        episode_tag = getattr(self, 'episode_tag', None)
+        if episode_tag:
+            traj_path = os.path.join(results_dir, f"traj_{episode_tag}.csv")
+        else:
+            traj_path = os.path.join(results_dir, f"traj_ep_{self._episode_id:04d}.csv")
         os.makedirs(results_dir, exist_ok=True)
         
         # Get all column names from first row
@@ -1069,14 +1253,12 @@ class MARLCollisionEnv(ParallelEnv):
         self._traj_rows = []
 
     def _compute_team_phi(self) -> float:
-        """Compute team potential Phi(s) based on normalized margins above separation."""
+        """Compute team potential Phi(s) based on minimum pairwise separation (0..1 in [0..10 NM])."""
         ids = self.agents
         if not ids or len(ids) < 2:
-            return 0.0
+            return 1.0  # Maximum potential when no conflicts possible
         
-        dcap = TEAM_DC_CAP_NM
-        cnt = 0
-        acc = 0.0
+        min_separation_nm = float('inf')
         
         for i in range(len(ids)):
             idx_i = bs.traf.id2idx(ids[i])
@@ -1091,11 +1273,14 @@ class MARLCollisionEnv(ParallelEnv):
                 try:
                     d_nm = haversine_nm(float(bs.traf.lat[idx_i]), float(bs.traf.lon[idx_i]),
                                        float(bs.traf.lat[idx_j]), float(bs.traf.lon[idx_j]))
-                    # normalized margin above separation
-                    margin = max(0.0, d_nm - self._separation_threshold_nm)
-                    acc += min(margin, dcap) / dcap
-                    cnt += 1
+                    min_separation_nm = min(min_separation_nm, d_nm)
                 except (IndexError, TypeError):
                     continue
                     
-        return float(acc / max(1, cnt))
+        # Handle case where no valid pairs found
+        if min_separation_nm == float('inf'):
+            return 1.0
+            
+        # Normalize min separation to [0, 1] range for [0, 10 NM]
+        phi_t = np.clip(min_separation_nm / 10.0, 0.0, 1.0)
+        return float(phi_t)
