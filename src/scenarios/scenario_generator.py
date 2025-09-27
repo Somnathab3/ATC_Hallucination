@@ -1,50 +1,105 @@
 
-# src/scenarios/scenario_generator.py
-import os, json, math
+"""
+Air Traffic Control Scenario Generator.
+
+This module generates standardized aircraft conflict scenarios for MARL training and evaluation.
+All scenarios are centered around a common airspace location with systematic aircraft placement
+to create reproducible conflict geometries.
+
+Scenario Types:
+- Head-on: Two aircraft approaching each other on reciprocal headings
+- T-formation: Perpendicular crossing with multiple aircraft
+- Parallel: In-trail separation challenges with same-direction traffic
+- Converging: Multiple aircraft targeting nearby waypoints
+- Canonical crossing: Four-way intersection with orthogonal traffic flows
+
+Each scenario includes initial positions, headings, speeds, and waypoint assignments
+designed to create inevitable conflicts without intervention, testing the collision
+avoidance capabilities of trained policies.
+"""
+
+import os
+import json
+import math
 from typing import Dict, Any, List
 
-CENTER_LAT = 52.0
-CENTER_LON = 4.0
-ALT_FT     = 10000.0
-SPD_KT     = 250.0
+# Scenario generation constants (Netherlands airspace reference)
+CENTER_LAT = 52.0      # Latitude center for all scenarios
+CENTER_LON = 4.0       # Longitude center for all scenarios  
+ALT_FT = 10000.0       # Standard flight level (FL100)
+SPD_KT = 250.0         # Standard cruise speed (knots)
 
 def nm_to_lat(nm: float) -> float:
+    """Convert nautical miles to latitude degrees (1° ≈ 60 NM)."""
     return nm / 60.0
 
 def nm_to_lon(nm: float, at_lat_deg: float) -> float:
+    """Convert nautical miles to longitude degrees, accounting for latitude convergence."""
     return nm / (60.0 * max(1e-6, math.cos(math.radians(at_lat_deg))))
 
 def pos_offset(lat0: float, lon0: float, north_nm: float, east_nm: float):
-    return (lat0 + nm_to_lat(north_nm),
-            lon0 + nm_to_lon(east_nm, lat0))
+    """Calculate new position given base coordinates and north/east offsets in NM."""
+    return (lat0 + nm_to_lat(north_nm), lon0 + nm_to_lon(east_nm, lat0))
 
 def save(name: str, agents: List[Dict[str, Any]], notes: str) -> str:
-    obj = {
+    """
+    Save scenario configuration to JSON file.
+    
+    Args:
+        name: Scenario name (used as filename)
+        agents: List of agent configuration dictionaries
+        notes: Description of scenario purpose and conflict geometry
+        
+    Returns:
+        Path to saved scenario file
+    """
+    scenario_config = {
         "scenario_name": name,
-        "seed": 42,
+        "seed": 42,  # Deterministic seed for reproducibility
         "notes": notes,
         "center": {"lat": CENTER_LAT, "lon": CENTER_LON, "alt_ft": ALT_FT},
-        "sim_dt_s": 1.0,
+        "sim_dt_s": 1.0,  # BlueSky timestep
         "agents": agents,
     }
+    
     os.makedirs("scenarios", exist_ok=True)
     path = os.path.join("scenarios", f"{name}.json")
     with open(path, "w", encoding="utf-8") as f:
-        json.dump(obj, f, indent=2)
+        json.dump(scenario_config, f, indent=2)
     return path
 
-# ---------- 1) HEAD-ON (2 aircraft) ----------
 def make_head_on(approach_nm: float = 18.0) -> str:
-    # A1 south->north, A2 north->south, both aligned through center
+    """
+    Generate head-on encounter scenario with two aircraft on reciprocal headings.
+    
+    Args:
+        approach_nm: Initial separation distance from center point
+        
+    Returns:
+        Path to generated scenario file
+    """
+    # Position aircraft north and south of center, flying toward each other
     a1_lat, a1_lon = pos_offset(CENTER_LAT, CENTER_LON, -approach_nm, 0.0)
     a2_lat, a2_lon = pos_offset(CENTER_LAT, CENTER_LON, +approach_nm, 0.0)
+    
     agents = [
-        {"id":"A1","type":"A320","lat":a1_lat,"lon":a1_lon,"hdg_deg":  0.0,"spd_kt":SPD_KT,"alt_ft":ALT_FT,
-         "waypoint": {"lat": CENTER_LAT+nm_to_lat(+approach_nm), "lon": CENTER_LON}},
-        {"id":"A2","type":"A320","lat":a2_lat,"lon":a2_lon,"hdg_deg":180.0,"spd_kt":SPD_KT,"alt_ft":ALT_FT,
-         "waypoint": {"lat": CENTER_LAT+nm_to_lat(-approach_nm), "lon": CENTER_LON}},
+        {
+            "id": "A1", "type": "A320", 
+            "lat": a1_lat, "lon": a1_lon, "hdg_deg": 0.0, 
+            "spd_kt": SPD_KT, "alt_ft": ALT_FT,
+            "waypoint": {"lat": CENTER_LAT + nm_to_lat(+approach_nm), "lon": CENTER_LON}
+        },
+        {
+            "id": "A2", "type": "A320",
+            "lat": a2_lat, "lon": a2_lon, "hdg_deg": 180.0,
+            "spd_kt": SPD_KT, "alt_ft": ALT_FT, 
+            "waypoint": {"lat": CENTER_LAT + nm_to_lat(-approach_nm), "lon": CENTER_LON}
+        },
     ]
-    return save("head_on", agents, "Two-aircraft head-on encounter along a straight line through center.")
+    
+    return save("head_on", agents, 
+                "Two-aircraft head-on encounter with reciprocal headings through center point. "
+                "Inevitable conflict without evasive action.")
 
 # ---------- 2) T-FORMATION (3 aircraft) ----------
 def make_t_formation(arm_nm: float = 20.0, stem_nm: float = 16.0, stem_x_nm: float = -6.0) -> str:
@@ -86,31 +141,97 @@ def make_parallel(track_x_nm: float = 0.0, gaps_nm: float = 6.0, south_nm: float
                        "waypoint":{"lat": wp_lat, "lon": wp_lon}})
     return save("parallel", agents, "Three-aircraft parallel/in-trail northbound on one track with 6 NM initial gaps.")
 
-# ---------- 4) CONVERGING (4 aircraft, oblique bearings) ----------
-def make_converging(radius_nm: float = 18.0, bearings_deg=(45.0, 135.0, 225.0, 315.0)) -> str:
+# ---------- 4) CONVERGING (each AC to its own near-by waypoint) ----------
+def make_converging(
+    radius_nm: float = 25.0,
+    bearings_deg=(20.0, 140.0, 260.0, 320.0),
+    wp_offsets_nm=None,
+    name: str = "converging",
+) -> str:
     """
-    Four aircraft converging to center on oblique bearings (not orthogonal).
-    Each starts radius_nm away along the reverse bearing and aims to pass through center.
+    Each aircraft converges to its *own* waypoint, with all waypoints clustered
+    near the sector center (not exactly at it).
+
+    - bearings_deg: desired inbound headings (toward each aircraft's own waypoint)
+    - radius_nm:    initial distance from its waypoint (placed 'behind' each leg)
+    - wp_offsets_nm: list of (north_nm, east_nm) offsets for the clustered waypoints
+                     relative to (CENTER_LAT, CENTER_LON). If None, uses a small
+                     deterministic cluster (~0.5-0.7 NM) around center.
     """
+    if wp_offsets_nm is None:
+        # 4 distinct waypoints ~0.5–0.7 NM around the center (tweak to taste)
+        wp_offsets_nm = [(+2.6, +2.2), (-2.4, +2.5), (+2.3, -2.6), (-2.5, -2.3)]
+
+    n = min(len(bearings_deg), len(wp_offsets_nm))
     agents = []
-    for i, brg in enumerate(bearings_deg, start=1):
-        # start at reverse bearing from center
-        back = (brg + 180.0) % 360.0
-        north =  radius_nm * math.cos(math.radians(back - 0.0))  # projection onto N
-        east  =  radius_nm * math.sin(math.radians(back - 0.0))  # projection onto E
-        lat, lon = pos_offset(CENTER_LAT, CENTER_LON, north, east)
-        # heading toward the center ≈ brg
+
+    for i in range(n):
+        inb = float(bearings_deg[i])                 # inbound bearing toward waypoint
+        # waypoint for this aircraft: center + small offset (clustered, not center)
+        wpN, wpE = wp_offsets_nm[i]
+        wp_lat, wp_lon = pos_offset(CENTER_LAT, CENTER_LON, wpN, wpE)
+
+        # start 'radius_nm' behind the waypoint along the reverse bearing
+        back = (inb + 180.0) % 360.0
+        north = radius_nm * math.cos(math.radians(back))
+        east  = radius_nm * math.sin(math.radians(back))
+        start_lat, start_lon = pos_offset(wp_lat, wp_lon, north, east)
+
+        # compute heading from start -> waypoint (clockwise from North)
+        dN_nm = (wp_lat - start_lat) * 60.0
+        dE_nm = (wp_lon - start_lon) * 60.0 * math.cos(math.radians(start_lat))
+        hdg = (math.degrees(math.atan2(dE_nm, dN_nm)) + 360.0) % 360.0
+
         agents.append({
-            "id": f"A{i}",
-            "type": "A320",
-            "lat":  lat,
-            "lon":  lon,
-            "hdg_deg": float(brg),
-            "spd_kt": SPD_KT,
-            "alt_ft": ALT_FT,
-            "waypoint": {"lat": CENTER_LAT, "lon": CENTER_LON}
+            "id":      f"A{i+1}",
+            "type":    "A320",
+            "lat":     start_lat,
+            "lon":     start_lon,
+            "hdg_deg": float(hdg),
+            "spd_kt":  SPD_KT,
+            "alt_ft":  ALT_FT,
+            "waypoint": {"lat": wp_lat, "lon": wp_lon},
         })
-    return save("converging", agents, "Four-aircraft converging conflict on oblique bearings (45°,135°,225°,315°).")
+
+    return save(
+        name,
+        agents,
+        "Converging: each aircraft targets a distinct waypoint clustered near the center (not at the center)."
+    )
+
+# ---------- 5) CANONICAL CROSSING (4 aircraft, orthogonal) ----------
+def make_canonical_crossing(radius_nm: float = 12.5) -> str:
+    """
+    Four aircraft crossing at center on orthogonal bearings (N, E, S, W).
+    Classic 4-way intersection scenario with inevitable conflict at center.
+    """
+    # Aircraft IDs using A0, A1, A2, A3 to match existing file
+    agents = [
+        # A0: South to North (hdg=0°)
+        {"id": "A0", "type": "A320", 
+         "lat": CENTER_LAT - nm_to_lat(radius_nm), "lon": CENTER_LON,
+         "hdg_deg": 0.0, "spd_kt": SPD_KT, "alt_ft": ALT_FT,
+         "waypoint": {"lat": CENTER_LAT + nm_to_lat(radius_nm), "lon": CENTER_LON}},
+        
+        # A1: West to East (hdg=90°)
+        {"id": "A1", "type": "A320",
+         "lat": CENTER_LAT, "lon": CENTER_LON - nm_to_lon(radius_nm, CENTER_LAT),
+         "hdg_deg": 90.0, "spd_kt": SPD_KT, "alt_ft": ALT_FT,
+         "waypoint": {"lat": CENTER_LAT, "lon": CENTER_LON + nm_to_lon(radius_nm, CENTER_LAT)}},
+        
+        # A2: North to South (hdg=180°)
+        {"id": "A2", "type": "A320",
+         "lat": CENTER_LAT + nm_to_lat(radius_nm), "lon": CENTER_LON,
+         "hdg_deg": 180.0, "spd_kt": SPD_KT, "alt_ft": ALT_FT,
+         "waypoint": {"lat": CENTER_LAT - nm_to_lat(radius_nm), "lon": CENTER_LON}},
+        
+        # A3: East to West (hdg=270°)
+        {"id": "A3", "type": "A320",
+         "lat": CENTER_LAT, "lon": CENTER_LON + nm_to_lon(radius_nm, CENTER_LAT),
+         "hdg_deg": 270.0, "spd_kt": SPD_KT, "alt_ft": ALT_FT,
+         "waypoint": {"lat": CENTER_LAT, "lon": CENTER_LON - nm_to_lon(radius_nm, CENTER_LAT)}}
+    ]
+    return save("canonical_crossing", agents, "Four-aircraft orthogonal crossing. Inevitable CPA at center at ~t=180s without intervention.")
 
 if __name__ == "__main__":
     paths = [
@@ -118,6 +239,7 @@ if __name__ == "__main__":
         make_t_formation(),
         make_parallel(),
         make_converging(),
+        make_canonical_crossing(),
     ]
     for p in paths:
         print("Wrote:", p)

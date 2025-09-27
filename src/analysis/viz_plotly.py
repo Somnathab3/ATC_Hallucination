@@ -1,10 +1,22 @@
-# viz_plotly.py
 """
-Interactive temporal and map animations using Plotly.
+Interactive Temporal Analysis and Animation using Plotly.
 
-Use Plotly to animate decision points and KPIs (min‑separation, TCPA/DCPA, 
-alert state, reward parts) across time and shift magnitudes. Uses scatter_map 
-with animation_frame="step_idx" and OSM tiles (no token needed).
+This module provides sophisticated interactive visualizations for temporal analysis
+of air traffic control system performance, featuring animated trajectories,
+multi-metric dashboards, and performance degradation analysis.
+
+Visualization Capabilities:
+- Time Series Analysis: Multi-trace KPI evolution with secondary axes
+- Animated Geographic Maps: Real-time trajectory playback with conflict overlay
+- Hallucination Dashboards: Comprehensive confusion matrix and performance analysis
+- Performance Degradation: Statistical analysis across shift magnitudes
+- Interactive Reports: HTML-based comprehensive analysis dashboards
+
+Technical Features:
+- Plotly-based: High-performance interactive visualization library
+- Animation Support: Smooth temporal playback with configurable timing
+- Multi-axis Plots: Complex metric relationships with proper scaling
+- Academic Quality: Publication-ready styling and export capabilities
 """
 
 import pandas as pd
@@ -15,14 +27,19 @@ from plotly.subplots import make_subplots
 
 def time_series_panel(df, title="Temporal KPIs"):
     """
-    Create multi-trace time series plot showing key performance indicators.
+    Generate multi-metric time series visualization with dual y-axes.
+    
+    Creates comprehensive temporal analysis showing separation distances,
+    DCPA values, and alert states over time for all agents, with proper
+    scaling and safety threshold annotations.
     
     Args:
-        df: DataFrame with temporal data
-        title: Plot title
+        df: DataFrame containing temporal data with sim_time_s, min_separation_nm,
+            predicted_alert, and agent-specific columns
+        title: Plot title for the visualization
         
     Returns:
-        plotly.graph_objects.Figure: Time series figure
+        plotly.graph_objects.Figure: Interactive time series with hover data
     """
     g = df.sort_values("sim_time_s")
     fig = go.Figure()

@@ -1,12 +1,21 @@
-# viz_hooks.py
 """
-Lightweight visualization hooks for shift testing.
+Visualization Integration Hooks for Shift Testing Pipeline.
 
-Provides easy-to-use functions that can be called from testers to generate:
-- Episode-level visuals: HTML maps, time series, animations
-- Run-level visuals: PNG degradation curves, heatmaps
+This module provides seamless integration between shift testing frameworks and
+visualization components, enabling automatic generation of comprehensive analysis
+artifacts during robustness evaluation experiments.
 
-This module acts as a bridge between shift testers and the visualization modules.
+Integration Features:
+- Episode-Level Visualization: Automatic map and time series generation per test case
+- Run-Level Analysis: Statistical summaries and degradation curve generation
+- Data Harmonization: Trajectory CSV and hallucination series integration
+- Batch Processing: Efficient visualization generation across multiple shift configurations
+
+Workflow Integration:
+- Called automatically by targeted_shift_tester during evaluation
+- Bridges trajectory data from environment with analysis visualization modules
+- Generates publication-ready artifacts suitable for academic assessment
+- Provides comprehensive HTML reports linking all generated visualizations
 """
 
 import os
@@ -83,16 +92,20 @@ def _series_to_frame(traj_csv: str, series: dict) -> pd.DataFrame:
 
 def make_episode_visuals(episode_dir: str, traj_csv: str, detector_series: dict, title: str = "") -> dict:
     """
-    Generate episode-level visualization artifacts.
+    Generate comprehensive episode-level visualization artifacts.
+    
+    Creates a complete set of visualizations for individual episode analysis,
+    including interactive maps, temporal analysis, and animated trajectory
+    playback with integrated hallucination detection results.
     
     Args:
-        episode_dir: Directory containing episode data
-        traj_csv: Path to trajectory CSV file
-        detector_series: Series data from hallucination detector
-        title: Title for visualizations
+        episode_dir: Directory containing episode data files
+        traj_csv: Path to rich trajectory CSV with integrated hallucination data
+        detector_series: Series data from hallucination detector (may be pre-integrated)
+        title: Descriptive title for visualization annotations
         
     Returns:
-        dict: Paths to generated visualization files
+        dict: Mapping of visualization types to generated file paths
     """
     try:
         # Import visualization modules

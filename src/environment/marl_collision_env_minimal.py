@@ -1,4 +1,21 @@
-# Minimal Multi-Agent Reinforcement Learning Environment for Air Traffic Collision Avoidance`
+"""
+Multi-Agent Reinforcement Learning Environment for Air Traffic Collision Avoidance.
+
+This module implements a comprehensive MARL environment for training air traffic control
+policies using BlueSky as the flight dynamics simulator. The environment supports:
+
+- Multi-agent coordination with shared policy architecture
+- Relative observation spaces (no raw lat/lon) for generalization
+- Team-based potential-based reward shaping (PBRS) for coordination
+- Real-time hallucination detection during training/evaluation
+- Comprehensive trajectory logging with safety metrics
+- Distribution shift testing support (targeted and unison shifts)
+- Wind field simulation for environmental robustness
+- Action delay modeling for realistic response times
+
+The environment integrates seamlessly with RLlib training workflows and provides
+rich trajectory data for offline analysis and academic evaluation.
+"""
 
 import os
 import csv
@@ -8,8 +25,9 @@ import atexit
 import numpy as np
 from typing import Dict, Any, Optional, Tuple
 import logging
+from math import cos, sin, radians
 
-# Suppress BlueSky logs immediately
+# Suppress verbose BlueSky logging to reduce noise during training
 for name in ("bluesky", "bluesky.navdatabase", "bluesky.simulation", "bluesky.traffic"):
     logging.getLogger(name).setLevel(logging.ERROR)
 
@@ -20,32 +38,33 @@ from pettingzoo.utils import ParallelEnv
 import bluesky as bs
 
 
-# Action scaling constants (similar to reference method)
-D_HEADING = 18.0  # degrees per unit action  
-D_VELOCITY = 10.0  # knots per unit action
+# Action scaling from normalized [-1,1] to physical units
+D_HEADING = 18.0   # Maximum heading change per action (degrees)
+D_VELOCITY = 10.0  # Maximum speed change per action (knots)
 
-# ---- Team coordination reward defaults (PBRS-style) ----
-DEFAULT_TEAM_COORDINATION_WEIGHT      = 0.2
-DEFAULT_TEAM_GAMMA                    = 0.99
-DEFAULT_TEAM_SHARE_MODE               = "responsibility"   # "even" | "responsibility" | "neighbor"
-DEFAULT_TEAM_EMA                      = 0.001
-DEFAULT_TEAM_CAP                      = 0.01
-DEFAULT_TEAM_ANNEAL                   = 1.0
-DEFAULT_TEAM_NEIGHBOR_THRESHOLD_KM    = 10.0
+# Team coordination reward parameters (PBRS-based multi-agent shaping)
+DEFAULT_TEAM_COORDINATION_WEIGHT = 0.2      # Weight of team reward vs individual
+DEFAULT_TEAM_GAMMA = 0.99                   # Team potential discount factor
+DEFAULT_TEAM_SHARE_MODE = "responsibility"  # How to distribute team rewards
+DEFAULT_TEAM_EMA = 0.001                    # EMA smoothing for team potential
+DEFAULT_TEAM_CAP = 0.01                     # Maximum team reward magnitude
+DEFAULT_TEAM_ANNEAL = 1.0                   # Team reward annealing factor
+DEFAULT_TEAM_NEIGHBOR_THRESHOLD_KM = 10.0   # Neighbor proximity threshold
 
-# ---- Individual reward defaults (rebalanced) ----
-DEFAULT_DRIFT_PENALTY_PER_SEC         = -0.1
-DEFAULT_PROGRESS_REWARD_PER_KM        =  0.02
-DEFAULT_BACKTRACK_PENALTY_PER_KM      = -0.1
-DEFAULT_TIME_PENALTY_PER_SEC          = -0.0005
-DEFAULT_REACH_REWARD                  = 10.0      # meaningful waypoint completion
-DEFAULT_INTRUSION_PENALTY             = -50.0
-DEFAULT_CONFLICT_DWELL_PENALTY_PER_SEC= -0.1
+# Individual reward component defaults (per-agent shaping)
+DEFAULT_DRIFT_PENALTY_PER_SEC = -0.1        # Penalty for heading drift from waypoint
+DEFAULT_PROGRESS_REWARD_PER_KM = 0.02       # Reward for progress toward waypoint
+DEFAULT_BACKTRACK_PENALTY_PER_KM = -0.1     # Penalty for moving away from waypoint
+DEFAULT_TIME_PENALTY_PER_SEC = -0.0005      # Small time penalty to encourage efficiency
+DEFAULT_REACH_REWARD = 50.0                 # Bonus for reaching waypoint
+DEFAULT_INTRUSION_PENALTY = -50.0           # Penalty for entering conflict zone
+DEFAULT_CONFLICT_DWELL_PENALTY_PER_SEC = -0.5  # Penalty for remaining in conflict
+DEFAULT_COLLISION_PENALTY = -100.0          # Severe penalty for collision
 
-# Geometry/normalization constants
-NM_TO_KM = 1.852
-DRIFT_NORM_DEN = 180.0                 # scale |drift| (deg) to [0..1]
-WAYPOINT_THRESHOLD_NM = 1.0            # Distance threshold for waypoint completion (changed from 5.0 to 1.0)
+# Physical constants and thresholds
+NM_TO_KM = 1.852                 # Nautical miles to kilometers conversion
+DRIFT_NORM_DEN = 180.0           # Normalization factor for heading drift penalty
+WAYPOINT_THRESHOLD_NM = 1.0      # Distance threshold for waypoint capture
 
 
 def kt_to_nms(kt):
@@ -53,13 +72,12 @@ def kt_to_nms(kt):
     return kt / 3600.0
 
 
-# BlueSky initialization flag (once per process)
+# Global BlueSky initialization tracking
 _BS_READY = False
 
-
-# Add proper BlueSky cleanup on exit to prevent warnings
 @atexit.register
 def _clean_bs():
+    """Clean up BlueSky simulation on process exit."""
     try:
         bs.sim.reset()
     except Exception:
@@ -75,13 +93,13 @@ def nm_to_lon_deg(nm: float, lat_deg: float) -> float:
 
 
 def heading_to_unit(heading_deg: float):
-    """Return unit vector (east, north) for given heading (degrees, 0=N, 90=E in BlueSky)."""
+    """Return unit vector (east, north) for given heading."""
     rad = math.radians(90.0 - heading_deg)
     return (math.cos(rad), math.sin(rad))
 
 
 def haversine_nm(lat1_deg: float, lon1_deg: float, lat2_deg: float, lon2_deg: float) -> float:
-    """Compute great-circle distance in nautical miles between two lat/lon points."""
+    """Compute great-circle distance in nautical miles."""
     from math import radians, sin, cos, sqrt, atan2
     
     lat1, lon1, lat2, lon2 = map(radians, [lat1_deg, lon1_deg, lat2_deg, lon2_deg])
@@ -89,7 +107,7 @@ def haversine_nm(lat1_deg: float, lon1_deg: float, lat2_deg: float, lon2_deg: fl
     dlon = lon2 - lon1
     a = sin(dlat/2)**2 + cos(lat1) * cos(lat2) * sin(dlon/2)**2
     c = 2 * atan2(sqrt(a), sqrt(1-a))
-    R_nm = 3440.065  # Earth radius in nautical miles
+    R_nm = 3440.065
     return R_nm * c
 
 
@@ -111,12 +129,23 @@ class MARLCollisionEnv(ParallelEnv):
             env_config = {}
         
         self.scenario_path = env_config.get("scenario_path", None)
-        if not self.scenario_path or not os.path.exists(self.scenario_path):
+        if not self.scenario_path:
+            raise ValueError("scenario_path must be provided in env_config")
+        
+        # Ensure absolute path
+        if not os.path.isabs(self.scenario_path):
+            current_dir = os.path.dirname(os.path.abspath(__file__))
+            project_root = os.path.join(current_dir, "..", "..")
+            self.scenario_path = os.path.join(project_root, self.scenario_path)
+        
+        self.scenario_path = os.path.normpath(self.scenario_path)
+        
+        if not os.path.exists(self.scenario_path):
             raise FileNotFoundError(f"scenario_path not found: {self.scenario_path}")
         
         self.max_episode_steps = int(env_config.get("max_episode_steps", 100))
         
-        # Init BlueSky once per process (worker-safe with better error handling)
+        # Initialize BlueSky once per process
         if not _BS_READY:
             import sys
             import time
@@ -126,13 +155,12 @@ class MARLCollisionEnv(ParallelEnv):
             sys.stdout = StringIO()
             sys.stderr = StringIO()
             try:
-                # Add small delay to avoid simultaneous init conflicts
                 time.sleep(0.1)
                 bs.init(mode='sim', detached=True)
                 bs.stack.stack("DT 1.0")
-                bs.stack.stack("CASMACHTHR 0")  # interpret SPD inputs as CAS knots only
+                bs.stack.stack("CASMACHTHR 0")
                 _BS_READY = True
-                print(f"BlueSky initialized successfully for process {os.getpid()}")
+                print(f"BlueSky initialized for process {os.getpid()}")
             except Exception as e:
                 print(f"BlueSky initialization failed: {e}")
                 raise RuntimeError(f"Failed to initialize BlueSky: {e}")
@@ -185,6 +213,7 @@ class MARLCollisionEnv(ParallelEnv):
         self.r_reach_bonus     = float(env_config.get("reach_reward", DEFAULT_REACH_REWARD))
         self.r_intrusion       = float(env_config.get("intrusion_penalty", DEFAULT_INTRUSION_PENALTY))
         self.r_dwell_per_s     = float(env_config.get("conflict_dwell_penalty_per_sec", DEFAULT_CONFLICT_DWELL_PENALTY_PER_SEC))
+        self.r_collision       = float(env_config.get("collision_penalty", DEFAULT_COLLISION_PENALTY))
         self.action_cost_per_unit = float(env_config.get("action_cost_per_unit", -0.01))
         self.terminal_not_reached_penalty = float(env_config.get("terminal_not_reached_penalty", -10.0))
         
@@ -202,6 +231,9 @@ class MARLCollisionEnv(ParallelEnv):
         self._base_cas_kt = {aid: 250.0 for aid in self.possible_agents}  # overwritten on reset
         self._spd_bounds_kt = (100.0, 400.0)  # more reasonable CAS window for training
         # Action scaling now handled by constants D_HEADING and D_VELOCITY
+        
+        # Environmental shift speed bounds scaling
+        self._spd_bounds_scale = {aid: (1.0, 1.0) for aid in self.possible_agents}
         
         # Collision detection settings (used for rewards but not termination)
         self.collision_nm = float(env_config.get("collision_nm", 1.0))
@@ -274,6 +306,23 @@ class MARLCollisionEnv(ParallelEnv):
         self._logger = logging.getLogger(self.__class__.__name__)
         self._logger.setLevel(logging.INFO)
 
+    def _nm_to_lat(self, nm: float) -> float:
+        return nm / 60.0
+
+    def _nm_to_lon(self, nm: float, at_lat_deg: float) -> float:
+        return nm / (60.0 * max(1e-6, math.cos(math.radians(at_lat_deg))))
+
+    def _pos_offset(self, lat0: float, lon0: float, north_nm: float, east_nm: float):
+        return (lat0 + self._nm_to_lat(north_nm),
+                lon0 + self._nm_to_lon(east_nm, lat0))
+
+
+
+    def get_episode_trajectory(self):
+        """Return the current episode trajectory dict (defensive copy)."""
+        import copy as _copy
+        return _copy.deepcopy(self._rt_trajectory)
+
     def observation_space(self, agent):
         return self._observation_spaces[agent]
 
@@ -315,6 +364,7 @@ class MARLCollisionEnv(ParallelEnv):
         # Extract shift parameters from options
         shift = options.get("shift", {})
         targeted_shift = options.get("targeted_shift", {})
+        env_shift = options.get("env_shift", {})
         
         # Legacy unison shift support
         pos_nm = float(shift.get("position_nm_delta", 0.0))
@@ -327,6 +377,8 @@ class MARLCollisionEnv(ParallelEnv):
 
         # Reset BlueSky efficiently (avoid full RESET which reloads nav DB)
         bs.stack.stack("HOLD")       # pause simulation
+        bs.stack.stack("DEL WIND")   # clear any residual wind field
+        
         # Delete existing aircraft
         for aid in self.possible_agents:
             try:
@@ -335,7 +387,6 @@ class MARLCollisionEnv(ParallelEnv):
                 pass
         bs.stack.stack("TIME 0")     # reset sim clock
         bs.stack.stack("DT 1.0")     # set sim tick to 1 second
-        bs.stack.stack("OP")         # resume operation
 
         # Load scenario and create aircraft
         if not self.scenario_path:
@@ -429,6 +480,43 @@ class MARLCollisionEnv(ParallelEnv):
             self._agent_waypoints[aid] = (wlat, wlon)
             bs.stack.stack(f"ADDWPT {aid} {wlat:.6f} {wlon:.6f}")
 
+        # Resume operation and flush aircraft creation safely (without turbulence/noise)
+        bs.stack.stack("OP")         # resume operation
+        bs.sim.step()
+        
+        # Apply wind field after aircraft creation and one step
+        if env_shift.get("wind"):
+            w = env_shift["wind"]
+            mode = str(w.get("mode", "uniform")).lower()
+
+            # center at current traffic centroid (fallback to NL if empty)
+            latc = float(bs.traf.lat.mean()) if bs.traf.ntraf > 0 else 52.0
+            lonc = float(bs.traf.lon.mean()) if bs.traf.ntraf > 0 else 4.0
+
+            if mode == "uniform":
+                # WIND lat lon FL100 dir spd (use FL100 as default altitude for uniform wind)
+                bs.stack.stack(f"WIND {latc:.6f} {lonc:.6f} FL100 {float(w.get('dir_deg',270)):.1f} {float(w.get('kt',20)):.1f}")
+            elif mode == "layered":
+                # WIND lat lon alt1 dir1 spd1 alt2 dir2 spd2 ...
+                parts = []
+                for lay in w.get("layers", []):
+                    alt_ft = int(lay.get("alt_ft", 10000))
+                    # Convert feet to flight level for BlueSky (divide by 100)
+                    fl = f"FL{alt_ft // 100:03d}"
+                    parts += [fl,
+                              f"{float(lay.get('dir_deg',270)):.1f}",
+                              f"{float(lay.get('kt',20)):.1f}"]
+                if parts:
+                    bs.stack.stack(f"WIND {latc:.6f} {lonc:.6f} " + " ".join(parts))
+
+        # Apply speed bounds scaling if specified
+        scale = env_shift.get("spd_bounds_scale")
+        if scale:
+            lo, hi = float(scale.get("lo", 1.0)), float(scale.get("hi", 1.0))
+            for aid in self.possible_agents:
+                self._spd_bounds_scale[aid] = (lo, hi)
+
+        # Flush once so effects are active immediately
         bs.sim.step()
         
         # Initialize team PBRS state
@@ -449,8 +537,13 @@ class MARLCollisionEnv(ParallelEnv):
                 "positions": [],
                 "actions": [],
                 "agents": {aid: {"headings": [], "speeds": []} for aid in self.possible_agents},
-                "waypoint_status": {aid: {} for aid in self.possible_agents}
+                "waypoint_status": {aid: {} for aid in self.possible_agents},
+                # NEW: persist waypoints for intent-aware alert gating
+                "waypoints": {aid: {"lat": self._agent_waypoints[aid][0],
+                                   "lon": self._agent_waypoints[aid][1]} for aid in self.possible_agents}
             }
+        
+
         
         infos = {aid: {} for aid in self.agents}
         return obs, infos
@@ -514,8 +607,11 @@ class MARLCollisionEnv(ParallelEnv):
 
             # Apply speed change with bounds (in knots)
             new_spd_kt = current_cas_kt + dv
-            lo, hi = self._spd_bounds_kt
-            new_spd_kt = max(lo, min(hi, new_spd_kt))  # clamp to training window
+            
+            # Apply environmental shift speed bounds scaling
+            slo, shi = self._spd_bounds_scale.get(aid, (1.0, 1.0))
+            lo_base, hi_base = self._spd_bounds_kt
+            new_spd_kt = max(lo_base * slo, min(hi_base * shi, new_spd_kt))
 
             # Issue BlueSky commands (SPD expects knots, not m/s)
             bs.stack.stack(f"HDG {aid} {new_hdg:.1f}")
@@ -634,16 +730,18 @@ class MARLCollisionEnv(ParallelEnv):
                 else:  # Fallback to deg/kt deltas
                     act_cost = self.action_cost_per_unit * float(np.abs(self._prev_actions_deg_kt[aid]).sum())
                 parts = {"los_penalty": 0.0, "act_cost": float(act_cost), "progress": 0.0, "backtrack": 0.0,
-                        "drift": 0.0, "align": 0.0, "time": -1.0, "dwell": 0.0, 
-                        "intrusion": 0.0, "reach": 0.0, "total": float(r + act_cost)}
+                        "drift": 0.0, "time": -1.0, "dwell": 0.0, 
+                        "intrusion": 0.0, "collision": 0.0, "reach": 0.0, "total": float(r + act_cost)}
             else:
                 # Special handling for agents who have already reached their waypoint
                 if self._waypoint_reached[aid]:
                     # Simplified reward for completed agents: just avoid conflicts and minimize cost
-                    r_dwell = 0.0; r_intr = 0.0
+                    r_dwell = 0.0; r_intr = 0.0; r_collision = 0.0
                     if conflict_flags[aid]:
                         r_intr = self.r_intrusion
                         r_dwell = self.r_dwell_per_s * dt
+                    if collision_flags[aid]:
+                        r_collision = self.r_collision
                     
                     los_penalty = 0.0  # don't double-count conflicts
                     act_cost = self.action_cost_per_unit * float(np.abs(self._prev_actions_deg_kt[aid]).sum())
@@ -652,13 +750,13 @@ class MARLCollisionEnv(ParallelEnv):
                     # Give reach bonus ONLY on the first step when waypoint is reached (not subsequent steps)
                     r_reach = self.r_reach_bonus if first_time_reach[aid] else 0.0
                     
-                    r_total = los_penalty + r_intr + r_dwell + act_cost + r_time + r_reach
+                    r_total = los_penalty + r_intr + r_dwell + r_collision + act_cost + r_time + r_reach
                     
                     parts = {
                         "los_penalty": float(los_penalty), "act_cost": float(act_cost), 
-                        "progress": 0.0, "backtrack": 0.0, "drift": 0.0, "align": 0.0,
+                        "progress": 0.0, "backtrack": 0.0, "drift": 0.0,
                         "time": float(r_time), "dwell": float(r_dwell), "intrusion": float(r_intr),
-                        "reach": float(r_reach), "terminal": 0.0, "total": float(r_total),
+                        "collision": float(r_collision), "reach": float(r_reach), "terminal": 0.0, "total": float(r_total),
                     }
                 else:
                     # Normal reward calculation for agents still working toward waypoint
@@ -691,11 +789,13 @@ class MARLCollisionEnv(ParallelEnv):
                     # 3) Time penalty (per sec)
                     r_time = self.r_time_per_s * dt
                     
-                    # 4) Conflict dwell penalty and intrusion penalty
-                    r_dwell = 0.0; r_intr = 0.0
+                    # 4) Conflict dwell penalty, intrusion penalty, and collision penalty
+                    r_dwell = 0.0; r_intr = 0.0; r_collision = 0.0
                     if conflict_flags[aid]:
                         r_intr = self.r_intrusion
                         r_dwell = self.r_dwell_per_s * dt
+                    if collision_flags[aid]:
+                        r_collision = self.r_collision
                     
                     # 5) Action cost based on normalized actions
                     norm = normalized_actions.get(aid, np.zeros(2, np.float32))
@@ -715,7 +815,7 @@ class MARLCollisionEnv(ParallelEnv):
                     # Total reward
                     r_total = (
                         los_penalty +  # disabled (set to 0) to avoid double-counting
-                        r_intr + r_dwell +
+                        r_intr + r_dwell + r_collision +
                         r_progress + r_backtrack +
                         r_drift +  # drift penalty
                         act_cost +     # action cost based on normalized actions
@@ -733,6 +833,7 @@ class MARLCollisionEnv(ParallelEnv):
                         "time": float(r_time),
                         "dwell": float(r_dwell),
                         "intrusion": float(r_intr),
+                        "collision": float(r_collision),
                         "reach": float(r_reach),
                         "terminal": float(r_terminal),
                         "total": float(r_total),
@@ -1195,6 +1296,7 @@ class MARLCollisionEnv(ParallelEnv):
                 "reward_time": parts.get("time", 0.0),
                 "reward_dwell": parts.get("dwell", 0.0),
                 "reward_intrusion": parts.get("intrusion", 0.0),
+                "reward_collision": parts.get("collision", 0.0),
                 "reward_reach": parts.get("reach", 0.0),
                 "reward_total": parts.get("total", 0.0),
                 "reward_team": parts.get("team", 0.0),

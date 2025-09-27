@@ -1,12 +1,25 @@
-# make_all_figures.py
 """
-Orchestration script for generating all analysis figures for the thesis.
+Master Orchestration Script for Comprehensive Analysis Figure Generation.
 
-This script coordinates the creation of all visualization outputs including:
-- Geographic maps with trajectory overlays and safety analysis
-- Interactive temporal analysis plots  
-- Publication-quality static figures
-- Comprehensive analysis reports
+This module serves as the central coordination point for generating complete sets
+of academic-quality visualizations and analysis artifacts from ATC hallucination
+detection research data. Designed for thesis and publication preparation.
+
+Orchestration Capabilities:
+- Complete Dataset Loading: Harmonized trajectory and hallucination data integration
+- Multi-Modal Visualization: Geographic maps, interactive plots, and static figures
+- Publication Quality: High-resolution outputs suitable for academic journals
+- Comprehensive Analysis: Statistical evaluation, hotspot detection, and safety metrics
+- Organized Output: Structured directory hierarchy with navigation-ready HTML reports
+
+Academic Applications:
+- Thesis Chapter Generation: Complete figure sets with consistent styling
+- Conference Presentations: Interactive dashboards and animated visualizations
+- Journal Publications: High-resolution static figures with statistical analysis
+- Technical Reports: Comprehensive analysis with supporting data exports
+
+The script implements a modular architecture allowing selective generation of
+visualization types while maintaining consistency across all output formats.
 """
 
 import os

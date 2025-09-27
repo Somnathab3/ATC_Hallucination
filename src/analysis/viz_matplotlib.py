@@ -1,12 +1,22 @@
-# viz_matplotlib.py
 """
-Publication-quality static figures using Matplotlib.
+Publication-Quality Static Visualization using Matplotlib.
 
-Provides:
-- Performance degradation curves vs. shift magnitude: line plots with 95% CI (bootstrap)
-- Agent vulnerability matrices: heatmaps by agent × magnitude
-- Confusion matrix evolution: stacked bars or heatmaps per shift bin
-- Oscillation patterns: bar chart of action reversal frequency per episode
+This module generates high-quality static figures suitable for academic publications,
+conference presentations, and technical reports. Implements advanced statistical
+visualization techniques with proper uncertainty quantification.
+
+Visualization Types:
+- Performance Degradation Curves: Statistical analysis with bootstrap confidence intervals
+- Agent Vulnerability Heatmaps: Multi-dimensional performance comparison matrices
+- Confusion Matrix Evolution: Temporal analysis of detection performance
+- Safety Margin Distributions: Comprehensive separation statistics and risk analysis
+- Action Oscillation Analysis: Policy stability assessment across agents
+
+Statistical Features:
+- Bootstrap Confidence Intervals: Robust uncertainty quantification (n=1000 samples)
+- Publication Styling: Seaborn-based professional appearance with consistent branding
+- Multi-panel Layouts: Complex analysis in organized subplot arrangements
+- High-Resolution Export: 300 DPI output suitable for journal publication
 """
 
 import numpy as np
@@ -23,17 +33,21 @@ sns.set_palette("husl")
 
 def bootstrap_ci(a, n_boot=1000, agg=np.mean, alpha=0.05, rng=None):
     """
-    Calculate bootstrap confidence intervals.
+    Compute bootstrap confidence intervals for robust uncertainty quantification.
+    
+    Implements bootstrap resampling to estimate sampling distribution and
+    calculate percentile-based confidence intervals without distributional
+    assumptions. Essential for publication-quality statistical analysis.
     
     Args:
-        a: Array of values
-        n_boot: Number of bootstrap samples
-        agg: Aggregation function (default: mean)
-        alpha: Significance level (default: 0.05 for 95% CI)
-        rng: Random number generator
+        a: Array of sample values for bootstrap resampling
+        n_boot: Number of bootstrap samples (default: 1000 for good precision)
+        agg: Aggregation function applied to each bootstrap sample
+        alpha: Significance level (0.05 for 95% confidence intervals)
+        rng: Random number generator for reproducibility
         
     Returns:
-        tuple: (mean, lower_bound, upper_bound)
+        tuple: (point_estimate, lower_bound, upper_bound) of confidence interval
     """
     rng = np.random.default_rng(42) if rng is None else rng
     a = np.asarray(a)

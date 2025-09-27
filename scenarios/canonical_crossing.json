@@ -1,65 +1,65 @@
 {
-  "agents": [
-    {
-      "alt_ft": 10000.0,
-      "hdg_deg": 0.0,
-      "id": "A0",
-      "lat": 51.791666666666664,
-      "lon": 4.0,
-      "spd_kt": 250.0,
-      "type": "A320",
-      "waypoint": {
-        "lat": 52.333333333333336,
-        "lon": 4.0
-      }
-    },
-    {
-      "alt_ft": 10000.0,
-      "hdg_deg": 90.0,
-      "id": "A1",
-      "lat": 52.0,
-      "lon": 3.661610573857762,
-      "spd_kt": 250.0,
-      "type": "A320",
-      "waypoint": {
-        "lat": 52.0,
-        "lon": 4.541423081827581
-      }
-    },
-    {
-      "alt_ft": 10000.0,
-      "hdg_deg": 180.0,
-      "id": "A2",
-      "lat": 52.208333333333336,
-      "lon": 4.0,
-      "spd_kt": 250.0,
-      "type": "A320",
-      "waypoint": {
-        "lat": 51.666666666666664,
-        "lon": 4.0
-      }
-    },
-    {
-      "alt_ft": 10000.0,
-      "hdg_deg": 270.0,
-      "id": "A3",
-      "lat": 52.0,
-      "lon": 4.338389426142238,
-      "spd_kt": 250.0,
-      "type": "A320",
-      "waypoint": {
-        "lat": 52.0,
-        "lon": 3.458576918172419
-      }
-    }
-  ],
-  "center": {
-    "alt_ft": 10000.0,
-    "lat": 52.0,
-    "lon": 4.0
-  },
-  "notes": "Four-aircraft orthogonal crossing. Inevitable CPA at center at ~t=180s without intervention.",
   "scenario_name": "canonical_crossing",
   "seed": 42,
-  "sim_dt_s": 1.0
+  "notes": "Four-aircraft orthogonal crossing. Inevitable CPA at center at ~t=180s without intervention.",
+  "center": {
+    "lat": 52.0,
+    "lon": 4.0,
+    "alt_ft": 10000.0
+  },
+  "sim_dt_s": 1.0,
+  "agents": [
+    {
+      "id": "A0",
+      "type": "A320",
+      "lat": 51.791666666666664,
+      "lon": 4.0,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 52.208333333333336,
+        "lon": 4.0
+      }
+    },
+    {
+      "id": "A1",
+      "type": "A320",
+      "lat": 52.0,
+      "lon": 3.661610573857762,
+      "hdg_deg": 90.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 52.0,
+        "lon": 4.338389426142238
+      }
+    },
+    {
+      "id": "A2",
+      "type": "A320",
+      "lat": 52.208333333333336,
+      "lon": 4.0,
+      "hdg_deg": 180.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.791666666666664,
+        "lon": 4.0
+      }
+    },
+    {
+      "id": "A3",
+      "type": "A320",
+      "lat": 52.0,
+      "lon": 4.338389426142238,
+      "hdg_deg": 270.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 52.0,
+        "lon": 3.661610573857762
+      }
+    }
+  ]
 }

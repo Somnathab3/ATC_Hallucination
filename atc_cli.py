@@ -67,14 +67,15 @@ class ATCController:
         """Generate scenario files using the scenario generator."""
         try:
             from src.scenarios.scenario_generator import (
-                make_head_on, make_t_formation, make_parallel, make_converging
+                make_head_on, make_t_formation, make_parallel, make_converging, make_canonical_crossing
             )
             
             scenario_funcs = {
                 "head_on": make_head_on,
                 "t_formation": make_t_formation,
                 "parallel": make_parallel,
-                "converging": make_converging
+                "converging": make_converging,
+                "canonical_crossing": make_canonical_crossing
             }
             
             if scenario_types is None or "all" in scenario_types:
@@ -269,7 +270,7 @@ class ATCController:
             }
             
             # Basic trajectory analysis
-            traj_files = list(results_path.glob("traj_ep_*.csv"))
+            traj_files = list(results_path.glob("traj_ep_*.csv")) + list(results_path.glob("**/traj_ep_*.csv")) + list(results_path.glob("traj_*.csv")) + list(results_path.glob("**/traj_*.csv"))
             if traj_files:
                 logger.info(f"Found {len(traj_files)} trajectory files")
                 analysis_results["trajectory_files"] = len(traj_files)
@@ -532,15 +533,26 @@ class ATCController:
             detector = HallucinationDetector()
             results = detector.compute(trajectory, sep_nm=5.0, return_series=True)
             
+            # Calculate derived metrics from confusion matrix
+            tp = results["tp"]
+            fp = results["fp"]
+            fn = results["fn"]
+            tn = results["tn"]
+            
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
+            f1_score = 2 * precision * recall / (precision + recall) if (precision + recall) > 0 else 0.0
+            accuracy = (tp + tn) / (tp + tn + fp + fn) if (tp + tn + fp + fn) > 0 else 0.0
+            
             return {
-                "true_positives": int(results["tp"]),
-                "false_positives": int(results["fp"]),
-                "false_negatives": int(results["fn"]),
-                "true_negatives": int(results["tn"]),
-                "precision": float(results["precision"]),
-                "recall": float(results["recall"]),
-                "f1_score": float(results["f1_score"]),
-                "accuracy": float(results["accuracy"]),
+                "true_positives": int(tp),
+                "false_positives": int(fp),
+                "false_negatives": int(fn),
+                "true_negatives": int(tn),
+                "precision": float(precision),
+                "recall": float(recall),
+                "f1_score": float(f1_score),
+                "accuracy": float(accuracy),
                 "resolution_efficiency": float(results.get("resolution_efficiency", 0.0)),
                 "unwanted_interventions": int(results.get("unwanted_interventions", 0))
             }

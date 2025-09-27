@@ -1,16 +1,22 @@
-# viz_geographic.py
 """
-Geographic visualization for ATC hallucination analysis using Folium.
+Interactive Geographic Visualization for Air Traffic Analysis.
 
-Provides comprehensive mapping capabilities including:
-- Baseline trajectory overlays vs. shifted trajectories
-- Heat maps of conflict locations (LoS ≤ 5 NM)  
-- Overlaid 5 NM safety circles around aircraft at each step
-- Hallucination markers (FP/FN/TP/TN) with color/shape coding
-- Time slider animation (TimestampedGeoJson / HeatMapWithTime)
+This module provides comprehensive interactive mapping capabilities using Folium
+for visualizing aircraft trajectories, conflicts, and hallucination detection
+results in a geospatial context suitable for academic presentation.
 
-Install note: folium is a pure‑Python lib that renders Leaflet maps; 
-its time plugins are built‑in.
+Visualization Features:
+- Interactive Trajectory Maps: Baseline vs shifted trajectory overlays
+- Conflict Heatmaps: Geographic distribution of Loss of Separation events
+- Safety Circles: Dynamic 5 NM separation threshold visualization
+- Hallucination Markers: Color-coded FP/FN/TP/TN event locations
+- Temporal Animation: Time-based trajectory playback with conflict overlay
+- Multi-layer Control: Toggle different analysis layers for focused viewing
+
+Integration:
+- Folium-based: Pure Python library generating Leaflet.js interactive maps
+- Academic Ready: Publication-quality visualizations with professional styling
+- Real-time Analysis: Direct integration with hallucination detection pipeline
 """
 
 import json
@@ -210,15 +216,20 @@ def add_time_heatmap(m, df, label="LoS heat over time"):
 
 def build_map(baseline_df, shifted_df=None, out_html="map.html"):
     """
-    Build comprehensive map with all visualization layers.
+    Generate comprehensive interactive map with multi-layer trajectory analysis.
+    
+    Creates a complete geospatial visualization combining trajectory paths,
+    conflict detection results, safety analysis, and temporal animations
+    in a single interactive HTML map suitable for academic presentation.
     
     Args:
-        baseline_df: DataFrame with baseline trajectory data
-        shifted_df: DataFrame with shifted trajectory data (optional)
-        out_html: Output HTML filename
+        baseline_df: DataFrame with baseline trajectory data including position,
+                    conflict flags, and hallucination detection results
+        shifted_df: Optional DataFrame with shifted trajectory data for comparison
+        out_html: Output HTML file path for the interactive map
         
     Returns:
-        str: Path to saved HTML file
+        str: Absolute path to saved HTML map file
     """
     m = make_basemap(baseline_df)
     

@@ -1,17 +1,26 @@
 """
-Targeted distribution shift tester: varying one agent's parameters while others remain nominal.
+Targeted Distribution Shift Testing Framework.
 
-This creates more complex scenarios by:
-1. Modifying only one agent at a time (speed, position, heading)
-2. Using micro to macro range variations to identify training model failures
-3. Positioning agents closer to increase conflict probability
-4. Testing edge cases that could cause hallucinations and safety violations
+This module implements systematic robustness testing for MARL collision avoidance policies
+by applying targeted perturbations to individual agents while keeping others at baseline.
+This approach identifies single points of failure and tests model generalization beyond
+the training distribution.
 
-Key differences from unison shifts:
-- Only one agent is modified per test case
-- Larger range variations to push beyond training envelope
-- Conflict-inducing position shifts (moving agents closer)
-- Enhanced analysis for single-agent impact assessment
+Testing Philosophy:
+- Individual agent modification: Only one agent per test case is modified
+- Micro to macro ranges: Small perturbations to large deviations from training envelope  
+- Conflict-inducing design: Modifications intentionally increase collision probability
+- Comprehensive analysis: Statistical evaluation across shift types and magnitudes
+
+Shift Categories:
+- Speed variations: ±5-30 kt from nominal cruise speed
+- Position shifts: Lateral and proximity modifications (0.05-0.4 degrees)
+- Heading deviations: ±5-30 degrees from optimal trajectory
+- Aircraft type variations: Different performance characteristics
+- Waypoint modifications: Destination changes affecting traffic flow
+
+The framework generates rich trajectory data with real-time hallucination detection,
+enabling detailed analysis of policy robustness and failure modes for academic evaluation.
 """
 
 import os
@@ -27,6 +36,19 @@ from typing import Dict, Any, List, Tuple, Optional
 # Add project root to Python path for imports
 current_dir = os.path.dirname(os.path.abspath(__file__))
 project_root = os.path.dirname(os.path.dirname(current_dir))
+
+# Ensure we have the correct project root by checking for key files
+if not (os.path.exists(os.path.join(project_root, "scenarios")) and 
+        os.path.exists(os.path.join(project_root, "atc_cli.py"))):
+    # Fallback: try to find project root by looking for atc_cli.py
+    search_dir = current_dir
+    for _ in range(5):  # Search up to 5 levels up
+        if (os.path.exists(os.path.join(search_dir, "scenarios")) and 
+            os.path.exists(os.path.join(search_dir, "atc_cli.py"))):
+            project_root = search_dir
+            break
+        search_dir = os.path.dirname(search_dir)
+
 if project_root not in sys.path:
     sys.path.append(project_root)
 
@@ -54,17 +76,22 @@ LOGGER.setLevel(logging.INFO)
 def create_targeted_shift(agent_id: str, shift_type: str, shift_value: float, scenario_agents: List[str], 
                          shift_data: Optional[Any] = None) -> Dict[str, Any]:
     """
-    Create a targeted shift affecting only one agent.
+    Create targeted shift configuration affecting specific agent(s).
+    
+    This function generates shift parameters that modify only the specified agent
+    while keeping others at baseline conditions, enabling isolation of individual
+    agent impact on system behavior.
     
     Args:
-        agent_id: Which agent to modify (A1, A2, A3) or "ALL" for all agents
-        shift_type: Type of modification (speed, position_closer, position_lateral, heading, aircraft_type, waypoint)
-        shift_value: Magnitude of the shift
-        scenario_agents: List of all agent IDs in scenario
-        shift_data: Additional data for complex shifts (e.g., aircraft type string, waypoint coordinates)
+        agent_id: Target agent identifier or "ALL" for system-wide changes
+        shift_type: Category of modification (speed, position_closer, position_lateral, 
+                   heading, aircraft_type, waypoint)
+        shift_value: Magnitude of shift in appropriate units (kt, degrees, etc.)
+        scenario_agents: Complete list of agent IDs in the scenario
+        shift_data: Additional parameters for complex shifts (aircraft types, coordinates)
     
     Returns:
-        Dictionary with agent-specific shifts
+        Dictionary mapping agent IDs to their respective shift configurations
     """
     shift_config = {}
     
@@ -106,13 +133,110 @@ def create_targeted_shift(agent_id: str, shift_type: str, shift_value: float, sc
     return shift_config
 
 
-def create_conflict_inducing_shifts(scenario_agents: List[str]) -> List[Tuple[str, str, str, float, str, Optional[Any]]]:
+def _create_wind_config_for_shift(test_id: str, shift_type: str, shift_value: float) -> Dict[str, Any]:
     """
-    Create a comprehensive list of targeted shifts designed to induce conflicts.
+    Create wind and noise configuration based on the shift type and characteristics.
+    
+    Args:
+        test_id: Unique test identifier
+        shift_type: Type of shift being applied
+        shift_value: Magnitude of the shift
     
     Returns:
-        List of (test_id, agent_id, shift_type, shift_value, description, shift_data) tuples
-        where shift_data contains additional parameters for complex shifts
+        Dictionary containing wind and noise configuration
+    """
+    # Base configuration - wind only (noise/turbulence removed)
+    env_shift: Dict[str, Any] = {
+        # Wind configuration will be added based on shift type
+    }
+    
+    # Different wind configurations based on shift characteristics
+    if "baseline" in test_id:
+        # Baseline: mild uniform wind
+        env_shift["wind"] = {
+            "mode": "uniform",
+            "dir_deg": 270,  # West wind
+            "kt": 15
+        }
+    elif "speed" in shift_type:
+        # Speed shifts: crosswind to challenge airspeed management
+        wind_strength = 20 + abs(shift_value) * 0.5  # Scale with shift magnitude
+        env_shift["wind"] = {
+            "mode": "uniform", 
+            "dir_deg": 90,  # East crosswind (perpendicular to typical routes)
+            "kt": min(wind_strength, 35)  # Cap at reasonable value
+        }
+    elif "position" in shift_type:
+        # Position shifts: headwind/tailwind components to affect timing
+        if "closer" in shift_type:
+            # Agents moving closer: use tailwind to increase convergence pressure
+            env_shift["wind"] = {
+                "mode": "uniform",
+                "dir_deg": 0,  # North wind (tailwind for south-bound traffic)
+                "kt": 25
+            }
+        elif "lateral" in shift_type:
+            # Lateral shifts: use layered winds to create vertical complexity
+            env_shift["wind"] = {
+                "mode": "layered",
+                "layers": [
+                    {"alt_ft": 10000, "dir_deg": 270, "kt": 20},  # West at FL100
+                    {"alt_ft": 20000, "dir_deg": 90, "kt": 15},   # East at FL200
+                    {"alt_ft": 30000, "dir_deg": 180, "kt": 25}   # South at FL300
+                ]
+            }
+    elif "heading" in shift_type:
+        # Heading shifts: strong crosswind to challenge course maintenance
+        wind_dir = 45 if shift_value > 0 else 315  # NE or NW wind based on shift direction
+        env_shift["wind"] = {
+            "mode": "uniform",
+            "dir_deg": wind_dir,
+            "kt": 30
+        }
+    elif "aircraft" in shift_type:
+        # Aircraft type changes: moderate uniform wind to test performance differences
+        env_shift["wind"] = {
+            "mode": "uniform",
+            "dir_deg": 225,  # SW wind
+            "kt": 18
+        }
+    elif "waypoint" in shift_type:
+        # Waypoint shifts: complex layered wind to challenge path planning
+        env_shift["wind"] = {
+            "mode": "layered", 
+            "layers": [
+                {"alt_ft": 8000, "dir_deg": 180, "kt": 22},   # South at lower altitude
+                {"alt_ft": 15000, "dir_deg": 270, "kt": 18},  # West at mid altitude  
+                {"alt_ft": 25000, "dir_deg": 90, "kt": 15}    # East at higher altitude
+            ]
+        }
+    else:
+        # Default: moderate uniform wind
+        env_shift["wind"] = {
+            "mode": "uniform",
+            "dir_deg": 270,
+            "kt": 20
+        }
+    
+    return env_shift
+
+
+def create_conflict_inducing_shifts(scenario_agents: List[str]) -> List[Tuple[str, str, str, float, str, Optional[Any]]]:
+    """
+    Generate comprehensive test matrix of conflict-inducing shifts.
+    
+    Creates systematic variations across multiple dimensions to thoroughly test
+    policy robustness. Shifts are categorized into micro (small perturbations)
+    and macro (large deviations) ranges to identify training envelope boundaries.
+    
+    Returns:
+        List of tuples containing:
+        - test_id: Unique identifier for the test configuration
+        - agent_id: Target agent to be modified
+        - shift_type: Category of modification
+        - shift_value: Numerical magnitude of shift
+        - description: Human-readable description
+        - shift_data: Additional parameters for complex modifications
     """
     shifts = []
     
@@ -291,7 +415,15 @@ def _create_targeted_analysis(df: pd.DataFrame, analysis_dir: str, timestamp: st
             'alert_duty_cycle': ['mean', 'std'],
             'alerts_per_min': ['mean', 'std'],
             'total_alert_time_s': ['mean', 'std'],
-            'avg_lead_time_s': ['mean', 'std']
+            'avg_lead_time_s': ['mean', 'std'],
+            # NEW: Extra path metrics
+            'total_extra_path_nm': ['mean', 'std'],
+            'avg_extra_path_nm': ['mean', 'std'],
+            'avg_extra_path_ratio': ['mean', 'std'],
+            # NEW: Intervention metrics
+            'num_interventions': ['mean', 'std', 'sum'],
+            'num_interventions_matched': ['mean', 'std', 'sum'],
+            'num_interventions_false': ['mean', 'std', 'sum']
         }).round(4)
         
         # Flatten column names
@@ -330,7 +462,15 @@ def _create_targeted_analysis(df: pd.DataFrame, analysis_dir: str, timestamp: st
         'alert_duty_cycle': 'mean',
         'alerts_per_min': 'mean',
         'total_alert_time_s': 'mean',
-        'avg_lead_time_s': 'mean'
+        'avg_lead_time_s': 'mean',
+        # NEW: Extra path metrics
+        'total_extra_path_nm': 'mean',
+        'avg_extra_path_nm': 'mean',
+        'avg_extra_path_ratio': 'mean',
+        # NEW: Intervention metrics
+        'num_interventions': 'sum',
+        'num_interventions_matched': 'sum',
+        'num_interventions_false': 'sum'
     }).round(4).reset_index()
     
     # Calculate additional derived metrics if they weren't already computed in groupby
@@ -359,7 +499,14 @@ def _create_targeted_analysis(df: pd.DataFrame, analysis_dir: str, timestamp: st
         'f1_score': 'mean',
         'alert_duty_cycle': 'mean',
         'alerts_per_min': 'mean',
-        'avg_lead_time_s': 'mean'
+        'avg_lead_time_s': 'mean',
+        # NEW: Extra path and intervention metrics
+        'total_extra_path_nm': 'mean',
+        'avg_extra_path_nm': 'mean',
+        'avg_extra_path_ratio': 'mean',
+        'num_interventions': 'sum',
+        'num_interventions_matched': 'sum',
+        'num_interventions_false': 'sum'
     }).round(4).reset_index()
     
     # Sort by conflict indicators
@@ -515,6 +662,78 @@ Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
 
 
 def make_env(env_config: Dict[str, Any]):
+    # Robust path correction for Ray workers
+    # Check if the corrupted path is present and fix it
+    if "scenario_path" in env_config and "077" in str(env_config["scenario_path"]):
+        # Extract filename from corrupted path
+        filename = os.path.basename(env_config["scenario_path"])
+        
+        # Find correct project root
+        current_file_dir = os.path.dirname(os.path.abspath(__file__))
+        search_dir = current_file_dir
+        project_root = None
+        
+        for _ in range(5):
+            if (os.path.exists(os.path.join(search_dir, "scenarios")) and 
+                os.path.exists(os.path.join(search_dir, "atc_cli.py"))):
+                project_root = search_dir
+                break
+            search_dir = os.path.dirname(search_dir)
+        
+        if project_root:
+            corrected_path = os.path.join(project_root, "scenarios", filename)
+            corrected_path = os.path.abspath(corrected_path)
+            
+            if os.path.exists(corrected_path):
+                env_config["scenario_path"] = corrected_path
+    
+    # Also fix results_dir if it contains corrupted path
+    if "results_dir" in env_config and "077" in str(env_config["results_dir"]):
+        current_file_dir = os.path.dirname(os.path.abspath(__file__))
+        search_dir = current_file_dir
+        project_root = None
+        
+        for _ in range(5):
+            if (os.path.exists(os.path.join(search_dir, "scenarios")) and 
+                os.path.exists(os.path.join(search_dir, "atc_cli.py"))):
+                project_root = search_dir
+                break
+            search_dir = os.path.dirname(search_dir)
+        
+        if project_root:
+            # Extract relative path from corrupted path
+            corrupted_results = env_config["results_dir"]
+            if "results" in corrupted_results:
+                # Extract the results directory part
+                results_part = corrupted_results.split("results")[-1]
+                if results_part.startswith("\\") or results_part.startswith("/"):
+                    results_part = results_part[1:]
+                
+                corrected_results = os.path.join(project_root, "results", results_part)
+                env_config["results_dir"] = os.path.abspath(corrected_results)
+    
+    # Ensure scenario_path is absolute
+    if "scenario_path" in env_config and not os.path.isabs(env_config["scenario_path"]):
+        current_file_dir = os.path.dirname(os.path.abspath(__file__))
+        search_dir = current_file_dir
+        project_root = None
+        
+        for _ in range(5):
+            if (os.path.exists(os.path.join(search_dir, "scenarios")) and 
+                os.path.exists(os.path.join(search_dir, "atc_cli.py"))):
+                project_root = search_dir
+                break
+            search_dir = os.path.dirname(search_dir)
+        
+        if project_root:
+            rel_path = env_config["scenario_path"]
+            if rel_path.startswith("scenarios/") or rel_path.startswith("scenarios\\"):
+                env_config["scenario_path"] = os.path.join(project_root, rel_path)
+            else:
+                env_config["scenario_path"] = os.path.join(project_root, "scenarios", rel_path)
+            
+            env_config["scenario_path"] = os.path.abspath(env_config["scenario_path"])
+    
     return ParallelPettingZooEnv(MARLCollisionEnv(env_config))
 
 
@@ -541,6 +760,9 @@ def run_targeted_shift_grid(repo_root: str,
         Path to the main summary CSV file
     """
     scenario_path = os.path.join(repo_root, "scenarios", f"{scenario_name}.json")
+    
+    # Ensure absolute path to avoid Ray worker directory issues
+    scenario_path = os.path.abspath(scenario_path)
     
     if not os.path.exists(scenario_path):
         raise FileNotFoundError(f"Scenario file not found: {scenario_path}")
@@ -685,12 +907,15 @@ def run_targeted_shift_grid(repo_root: str,
             # Create targeted shift configuration
             shift_config = create_targeted_shift(agent_id, shift_type, shift_value, scenario_agents, shift_data)
             
+            # Create environmental shift configuration (wind + noise) based on shift type
+            env_shift = _create_wind_config_for_shift(test_id, shift_type, shift_value)
+            
             # Build env with proper wrapper
             env = MARLCollisionEnv(env_config)
             env_pz = ParallelPettingZooEnv(env)
             
             try:
-                obs, _ = env_pz.reset(options={"targeted_shift": shift_config})
+                obs, _ = env_pz.reset(options={"targeted_shift": shift_config, "env_shift": env_shift})
                 if not obs:
                     LOGGER.warning(f"Empty observation on reset for {ep_tag}")
                     continue
@@ -891,6 +1116,101 @@ def run_targeted_shift_grid(repo_root: str,
                     
                     avg_lead_time_s = float(np.mean([t for t in lead_times if t != float('inf')])) if lead_times and any(t != float('inf') for t in lead_times) else 0.0
                     
+                    # Extra path metrics - calculate deviation from direct start->waypoint paths
+                    total_extra_path_nm = 0.0
+                    avg_extra_path_nm = 0.0
+                    avg_extra_path_ratio = 0.0
+                    
+                    try:
+                        # Calculate path lengths from trajectory data in CSV
+                        agent_ids = df['agent_id'].unique()
+                        agent_extra_paths = []
+                        
+                        for aid in agent_ids:
+                            agent_data = df[df['agent_id'] == aid].sort_values('step_idx')
+                            if len(agent_data) < 2:
+                                continue
+                                
+                            # Calculate actual path length
+                            positions = list(zip(agent_data['lat_deg'], agent_data['lon_deg']))
+                            actual_path_nm = 0.0
+                            for i in range(1, len(positions)):
+                                lat1, lon1 = positions[i-1]
+                                lat2, lon2 = positions[i]
+                                # Simple distance approximation (good enough for small distances)
+                                dlat = lat2 - lat1
+                                dlon = lon2 - lon1
+                                dist_deg = np.sqrt(dlat**2 + dlon**2)
+                                dist_nm = dist_deg * 60.0  # Rough conversion to nautical miles
+                                actual_path_nm += dist_nm
+                            
+                            # Try to get waypoint info from trajectory waypoints or estimate from end position
+                            # For simplicity, use straight-line distance from start to end as "direct" path
+                            start_pos = positions[0]
+                            end_pos = positions[-1]
+                            direct_nm = np.sqrt((end_pos[0] - start_pos[0])**2 + (end_pos[1] - start_pos[1])**2) * 60.0
+                            
+                            if direct_nm > 0:
+                                extra_nm = max(0.0, actual_path_nm - direct_nm)
+                                agent_extra_paths.append(extra_nm)
+                        
+                        if agent_extra_paths:
+                            total_extra_path_nm = float(sum(agent_extra_paths))
+                            avg_extra_path_nm = float(np.mean(agent_extra_paths))
+                            # Calculate ratio as (actual/direct - 1), average across agents
+                            ratios = []
+                            for aid in agent_ids:
+                                agent_data = df[df['agent_id'] == aid].sort_values('step_idx')
+                                if len(agent_data) < 2:
+                                    continue
+                                positions = list(zip(agent_data['lat_deg'], agent_data['lon_deg']))
+                                actual_path_nm = sum(np.sqrt((positions[i][0] - positions[i-1][0])**2 + (positions[i][1] - positions[i-1][1])**2) * 60.0 for i in range(1, len(positions)))
+                                direct_nm = np.sqrt((positions[-1][0] - positions[0][0])**2 + (positions[-1][1] - positions[0][1])**2) * 60.0
+                                if direct_nm > 0:
+                                    ratios.append((actual_path_nm / direct_nm) - 1.0)
+                            avg_extra_path_ratio = float(np.mean(ratios)) if ratios else 0.0
+                    except Exception:
+                        # Fallback if path calculation fails
+                        total_extra_path_nm = avg_extra_path_nm = avg_extra_path_ratio = 0.0
+                    
+                    # Intervention metrics - count alert windows/runs
+                    try:
+                        # Find alert runs (consecutive alert periods)
+                        alert_runs = []
+                        in_run = False
+                        run_start = None
+                        
+                        for i, is_alert in enumerate(alert_flags):
+                            if is_alert and not in_run:
+                                # Start of new alert run
+                                in_run = True
+                                run_start = i
+                            elif not is_alert and in_run:
+                                # End of alert run
+                                in_run = False
+                                alert_runs.append((run_start, i-1))
+                        
+                        # Handle case where alert run continues to end
+                        if in_run:
+                            alert_runs.append((run_start, len(alert_flags)-1))
+                        
+                        num_interventions = len(alert_runs)
+                        
+                        # For matched/false interventions, we'd need IoU matching with ground truth runs
+                        # For simplicity, use a basic heuristic: interventions that overlap with gt_conflict
+                        num_interventions_matched = 0
+                        for start, end in alert_runs:
+                            # Check if this alert run overlaps with any ground truth conflict
+                            gt_overlap = any(gt_flags[i] for i in range(start, end+1))
+                            if gt_overlap:
+                                num_interventions_matched += 1
+                        
+                        num_interventions_false = num_interventions - num_interventions_matched
+                        
+                    except Exception:
+                        # Fallback if intervention calculation fails
+                        num_interventions = num_interventions_matched = num_interventions_false = 0
+                    
                     # Calculate additional missing columns from available data
                     # Flight time: total episode duration
                     flight_time_s = episode_time_s
@@ -957,6 +1277,16 @@ def run_targeted_shift_grid(repo_root: str,
                         "path_efficiency": path_efficiency,
                         "waypoint_reached_ratio": waypoint_reached_ratio,
                         
+                        # NEW: Extra path metrics (deviation from direct paths)
+                        "total_extra_path_nm": total_extra_path_nm,
+                        "avg_extra_path_nm": avg_extra_path_nm,
+                        "avg_extra_path_ratio": avg_extra_path_ratio,
+                        
+                        # NEW: Intervention count metrics
+                        "num_interventions": num_interventions,
+                        "num_interventions_matched": num_interventions_matched,
+                        "num_interventions_false": num_interventions_false,
+                        
                         # High-value metrics
                         "precision": precision,
                         "recall": recall,
@@ -985,6 +1315,14 @@ def run_targeted_shift_grid(repo_root: str,
                         "total_path_length_nm": 0.0,
                         "path_efficiency": 1.0,
                         "waypoint_reached_ratio": 0.0,
+                        # NEW: Extra path metrics with defaults
+                        "total_extra_path_nm": 0.0,
+                        "avg_extra_path_nm": 0.0,
+                        "avg_extra_path_ratio": 0.0,
+                        # NEW: Intervention metrics with defaults
+                        "num_interventions": 0,
+                        "num_interventions_matched": 0,
+                        "num_interventions_false": 0,
                         # High-value metrics
                         "precision": 0.0, "recall": 0.0, "f1_score": 0.0,
                         "alert_duty_cycle": 0.0, "alerts_per_min": 0.0, "total_alert_time_s": 0.0,
@@ -1004,6 +1342,14 @@ def run_targeted_shift_grid(repo_root: str,
                     "total_path_length_nm": 0.0,
                     "path_efficiency": 1.0,
                     "waypoint_reached_ratio": 0.0,
+                    # NEW: Extra path metrics with defaults
+                    "total_extra_path_nm": 0.0,
+                    "avg_extra_path_nm": 0.0,
+                    "avg_extra_path_ratio": 0.0,
+                    # NEW: Intervention metrics with defaults
+                    "num_interventions": 0,
+                    "num_interventions_matched": 0,
+                    "num_interventions_false": 0,
                     # High-value metrics
                     "precision": 0.0, "recall": 0.0, "f1_score": 0.0,
                     "alert_duty_cycle": 0.0, "alerts_per_min": 0.0, "total_alert_time_s": 0.0,

@@ -1,9 +1,20 @@
-# analysis_hotspots.py
 """
-Hotspot clustering analysis for conflict locations and hallucination events.
+Spatial Hotspot Analysis for Conflict and Hallucination Events.
 
-Provides clustering of FP/FN events to identify problematic areas
-and conflict concentration zones.
+This module implements advanced spatial clustering techniques to identify geographic
+regions where conflicts and hallucination events concentrate, providing insights
+into airspace design and policy failure modes.
+
+Core Functionality:
+- DBSCAN Clustering: Density-based spatial clustering of event locations
+- Hallucination Hotspots: Geographic concentration of false positives and false negatives
+- Conflict Zone Identification: Areas with frequent Loss of Separation events
+- Statistical Analysis: Cluster characterization with geometric and temporal metrics
+
+Applications:
+- Identifying problematic airspace regions requiring design attention
+- Understanding geographic bias in conflict detection algorithms
+- Academic analysis of spatial patterns in safety-critical aviation systems
 """
 
 import numpy as np
@@ -26,16 +37,20 @@ def haversine_distance(lat1, lon1, lat2, lon2):
 
 def cluster_fp_fn(df, kind="fp", eps_nm=3.0, min_samples=6):
     """
-    Cluster false positive or false negative events by location.
+    Apply DBSCAN clustering to hallucination events by geographic location.
+    
+    Uses density-based clustering to identify regions where hallucination events
+    (false positives, false negatives, etc.) concentrate, enabling identification
+    of systematic biases or problematic airspace regions.
     
     Args:
-        df: DataFrame with hallucination events
-        kind: Type of events to cluster ("fp", "fn", "tp", "tn")
-        eps_nm: Maximum distance between samples in the same cluster (nautical miles)
-        min_samples: Minimum number of samples in a cluster
+        df: DataFrame containing event data with lat_deg, lon_deg columns
+        kind: Event type to cluster ("fp", "fn", "tp", "tn")
+        eps_nm: Maximum distance between cluster members in nautical miles
+        min_samples: Minimum events required to form a cluster
         
     Returns:
-        pandas.DataFrame: Original DataFrame with cluster labels added
+        pandas.DataFrame: Input DataFrame with cluster labels (-1 for noise)
     """
     # Filter for the specified event type
     events = df[df.get(kind, 0) == 1].copy()

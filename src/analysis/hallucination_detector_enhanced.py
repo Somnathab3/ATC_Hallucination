@@ -1,14 +1,22 @@
 """
-Enhanced hallucination detector computing confusion matrices from TCPA/DCPA and action magnitudes.
-Includes LOS event tracking and efficiency metrics.
+Enhanced Hallucination Detector for Air Traffic Control Systems.
 
-- Ground truth: conflict if any pair's DCPA < 5 NM within 300 s (per timestep flag).
-- Prediction proxy: "alert" when any agent issues a large action (|dpsi|>3 deg OR |dv|>5 kt).
-- Resolution: after an alert, did min HMD exceed 5 NM within 60 s?
-- LOS Events: Track when aircraft separation drops below threshold
-- Efficiency: Calculate path lengths, flight times, and completion metrics
+This module provides real-time detection of conflict prediction errors (hallucinations) in
+MARL-based air traffic control systems. It compares ground truth conflict predictions based on
+TCPA/DCPA calculations against policy action patterns to identify false alerts and missed conflicts.
 
-Outputs a pandas-friendly dict per episode.
+Core Functionality:
+- Ground truth: Conflict detection using TCPA/DCPA thresholds with 5 NM separation
+- Prediction proxy: Alert detection from significant agent actions (heading/speed changes)
+- Intent-aware filtering: Ignores navigation-related actions toward waypoints
+- Threat-aware gating: Requires near-term threat presence for alert validation
+- IoU-based window matching: Robust event-level performance evaluation
+- Loss of Separation (LOS) tracking: Safety margin violation detection
+- Resolution assessment: Post-alert conflict resolution verification
+- Efficiency metrics: Path deviation and completion rate analysis
+
+The detector outputs comprehensive confusion matrices and performance metrics suitable
+for pandas analysis and academic reporting.
 """
 
 import math
@@ -17,8 +25,60 @@ from typing import Dict, Any, List, Tuple, Optional
 import numpy as np
 
 
+# --- helpers for intent- and threat-aware alerting ---
+def _bearing_deg(lat1, lon1, lat2, lon2):
+    """Calculate initial bearing from point 1 to point 2 in degrees."""
+    y = math.sin(math.radians(lon2 - lon1)) * math.cos(math.radians(lat2))
+    x = (math.cos(math.radians(lat1)) * math.sin(math.radians(lat2)) -
+         math.sin(math.radians(lat1)) * math.cos(math.radians(lat2)) *
+         math.cos(math.radians(lon2 - lon1)))
+    brg = (math.degrees(math.atan2(y, x)) + 360.0) % 360.0
+    return brg
+
+def _angdiff(a, b):
+    """Calculate the smallest angular difference between angles a and b."""
+    d = (a - b + 180.0) % 360.0 - 180.0
+    return d
+
+def _threat_for_agent(pos_t, hdg_t, spd_t, aid, horizon_s, los_nm):
+    """
+    Find the most threatening intruder aircraft for a given agent.
+    
+    Args:
+        pos_t: Dictionary of agent positions at current timestep
+        hdg_t: Dictionary of agent headings at current timestep  
+        spd_t: Dictionary of agent speeds at current timestep
+        aid: Target agent ID to find threats for
+        horizon_s: Time horizon for TCPA/DCPA calculations
+        los_nm: Loss of separation threshold in nautical miles
+    
+    Returns:
+        Tuple of (intruder_id, tcpa_seconds, dcpa_nautical_miles) for most threatening intruder
+    """
+    lat_i, lon_i = pos_t[aid]
+    hi, si_kt = hdg_t[aid], spd_t[aid]
+    ei, ni = heading_to_unit(hi)
+    vi_e, vi_n = kt_to_nms(si_kt) * ei, kt_to_nms(si_kt) * ni
+    best = (None, float('inf'), float('inf'))
+    
+    for aj, (lat_j, lon_j) in pos_t.items():
+        if aj == aid: 
+            continue
+        hj, sj_kt = hdg_t[aj], spd_t[aj]
+        ej, nj = heading_to_unit(hj)
+        vj_e, vj_n = kt_to_nms(sj_kt) * ej, kt_to_nms(sj_kt) * nj
+        tcpa, dcpa = compute_tcpa_dcpa_nm(lat_i, lon_i, vi_e, vi_n, lat_j, lon_j, vj_e, vj_n, horizon_s)
+        
+        # Prioritize smallest DCPA, then smallest TCPA as tiebreaker
+        if dcpa < best[2] or (abs(dcpa - best[2]) < 1e-6 and tcpa < best[1]):
+            best = (aj, tcpa, dcpa)
+    
+    return best
+
+
 def haversine_nm(lat1, lon1, lat2, lon2):
-    R_nm = 3440.065
+    """Calculate great circle distance between two points in nautical miles."""
+    R_nm = 3440.065  # Earth radius in nautical miles
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
     a = (math.sin(dlat/2.0) ** 2 +
@@ -28,50 +88,104 @@ def haversine_nm(lat1, lon1, lat2, lon2):
     return R_nm * c
 
 def heading_to_unit(heading_deg: float) -> Tuple[float, float]:
+    """Convert heading in degrees to unit vector (east, north)."""
     rad = math.radians(90.0 - heading_deg)
     return (math.cos(rad), math.sin(rad))
 
 def kt_to_nms(kt: float) -> float:
+    """Convert knots to nautical miles per second."""
     return kt / 3600.0
 
 
 def compute_tcpa_dcpa_nm(lat_i, lon_i, vi_east_nms, vi_north_nms,
                          lat_j, lon_j, vj_east_nms, vj_north_nms,
                          horizon_s: float = 300.0) -> Tuple[float, float]:
+    """
+    Compute Time to Closest Point of Approach (TCPA) and Distance at CPA (DCPA).
+    
+    Args:
+        lat_i, lon_i: Aircraft i position in degrees
+        vi_east_nms, vi_north_nms: Aircraft i velocity in NM/s
+        lat_j, lon_j: Aircraft j position in degrees  
+        vj_east_nms, vj_north_nms: Aircraft j velocity in NM/s
+        horizon_s: Maximum time horizon for TCPA calculation
+        
+    Returns:
+        Tuple of (tcpa_seconds, dcpa_nautical_miles)
+    """
+    # Convert lat/lon differences to relative positions in NM
     dx_nm = haversine_nm(lat_i, lon_i, lat_i, lon_j) * (1 if lon_j >= lon_i else -1)
     dy_nm = haversine_nm(lat_i, lon_i, lat_j, lon_i) * (1 if lat_j >= lat_i else -1)
 
+    # Relative position and velocity
     rx, ry = dx_nm, dy_nm
     vx, vy = (vj_east_nms - vi_east_nms), (vj_north_nms - vi_north_nms)
     vv = vx*vx + vy*vy
+    
+    # Handle case where relative velocity is negligible
     if vv < 1e-12:
         return 0.0, math.hypot(rx, ry)
+    
+    # Calculate TCPA and constrain to [0, horizon_s]
     tcpa = -(rx*vx + ry*vy) / vv
     tcpa = max(0.0, min(horizon_s, tcpa))
+    
+    # Calculate DCPA at the constrained TCPA
     dcpa = math.hypot(rx + vx*tcpa, ry + vy*tcpa)
     return tcpa, dcpa
 
 
 class HallucinationDetector:
+    """
+    Real-time hallucination detector for MARL air traffic control systems.
+    
+    Detects false alerts (ghost conflicts) and missed conflicts by comparing ground truth
+    TCPA/DCPA-based conflict predictions with policy action patterns. Uses sophisticated
+    intent-aware filtering and threat-aware gating to minimize false positives.
+    """
+    
     def __init__(self, horizon_s: float = 180.0, action_thresh=(3.0, 5.0),
                  res_window_s: float = 90.0, action_period_s: float = 10.0,
                  los_threshold_nm: float = 5.0, lag_pre_steps: int = 1,
                  lag_post_steps: int = 1, debounce_n: int = 2, debounce_m: int = 3,
                  iou_threshold: float = 0.1):
-        self.horizon_s = float(horizon_s)  # Reduced from 300 to 180 to reduce "always in future" flags
+        """
+        Initialize the hallucination detector.
+        
+        Args:
+            horizon_s: Time horizon for TCPA/DCPA calculations
+            action_thresh: Tuple of (heading_deg, speed_kt) thresholds for alert detection
+            res_window_s: Time window for resolution verification after conflicts
+            action_period_s: Environment timestep duration in seconds
+            los_threshold_nm: Loss of separation threshold in nautical miles
+            lag_pre_steps: Alert expansion steps before detected action
+            lag_post_steps: Alert expansion steps after detected action
+            debounce_n: Minimum detections in window (e.g., 2 of 3)
+            debounce_m: Debounce window size in timesteps
+            iou_threshold: Intersection over Union threshold for event matching
+        """
+        self.horizon_s = float(horizon_s)
         self.theta_min_deg = float(action_thresh[0])
         self.v_min_kt = float(action_thresh[1])
-        self.res_window_s = float(res_window_s)  # Increased to 90s for better resolution verification
-        self.action_period_s = float(action_period_s)  # Should match environment timestep
+        self.res_window_s = float(res_window_s)
+        self.action_period_s = float(action_period_s)
         self.los_threshold_nm = float(los_threshold_nm)
         self.lag_pre_steps = int(lag_pre_steps)
         self.lag_post_steps = int(lag_post_steps)
-        self.debounce_n = int(debounce_n)  # 2-of-3 timesteps
+        self.debounce_n = int(debounce_n)
         self.debounce_m = int(debounce_m)
         self.iou_threshold = float(iou_threshold)
 
     def _detect_los_events(self, pos_seq: List[Dict[str, Tuple[float, float]]]) -> Dict[str, Any]:
-        """Detect Loss of Separation (LOS) events between aircraft pairs."""
+        """
+        Detect Loss of Separation (LOS) events between aircraft pairs.
+        
+        Args:
+            pos_seq: Sequence of position dictionaries by timestep
+            
+        Returns:
+            Dictionary containing LOS event statistics and details
+        """
         T = len(pos_seq)
         los_events = []
         min_separation = float('inf')
@@ -131,9 +245,19 @@ class HallucinationDetector:
         }
 
     def _calculate_efficiency_metrics(self, trajectory: Dict[str, Any]) -> Dict[str, float]:
-        """Calculate efficiency metrics: path length, time to completion, etc."""
+        """
+        Calculate path efficiency and completion metrics.
+        
+        Args:
+            trajectory: Episode trajectory data with positions, waypoints, and metadata
+            
+        Returns:
+            Dictionary of efficiency metrics including path lengths, completion rates,
+            and deviations from optimal routes
+        """
         pos_seq = trajectory.get("positions", [])
         timestamps = trajectory.get("timestamps", [])
+        waypoints = trajectory.get("waypoints", {})
         scenario_meta = trajectory.get("scenario_metadata", {})
         
         if not pos_seq or not timestamps:
@@ -142,48 +266,56 @@ class HallucinationDetector:
                 'avg_path_length_nm': 0.0,
                 'flight_time_s': 0.0,
                 'path_efficiency': 0.0,
-                'waypoint_reached_ratio': 0.0
+                'waypoint_reached_ratio': 0.0,
+                'total_extra_path_nm': 0.0,
+                'avg_extra_path_nm': 0.0,
+                'avg_extra_path_ratio': 0.0
             }
         
-        # Calculate path lengths for each aircraft
-        agent_path_lengths = {}
+        # Calculate per-agent path metrics
+        agent_path_lengths, agent_extra_nm, agent_extra_ratio = {}, {}, {}
         waypoints_reached = 0
         total_agents = 0
-        
+
         for aid in pos_seq[0].keys():
             total_agents += 1
-            path_length = 0.0
-            agent_positions = []
             
-            # Extract positions for this agent
-            for step in pos_seq:
-                if aid in step:
-                    agent_positions.append(step[aid])
-            
-            # Calculate cumulative path length
-            for i in range(1, len(agent_positions)):
-                lat1, lon1 = agent_positions[i-1]
-                lat2, lon2 = agent_positions[i]
-                segment_length = haversine_nm(lat1, lon1, lat2, lon2)
-                path_length += segment_length
-            
-            agent_path_lengths[aid] = path_length
-            
-            # Check if agent reached waypoint (simple heuristic - if final position is close to waypoint)
-            if len(agent_positions) > 0:
-                final_lat, final_lon = agent_positions[-1]
-                # Note: Would need waypoint coordinates from scenario to calculate exact efficiency
-                # For now, assume completion if flight lasted reasonable time
-                if len(timestamps) > 50:  # Arbitrary threshold for "completion"
+            # Calculate actual flight path length
+            pts = [step[aid] for step in pos_seq if aid in step]
+            L = sum(haversine_nm(*pts[i-1], *pts[i]) for i in range(1, len(pts)))
+            agent_path_lengths[aid] = L
+
+            # Compare to direct path if waypoint is available
+            if waypoints.get(aid) and pts:
+                wlat, wlon = waypoints[aid]["lat"], waypoints[aid]["lon"]
+                direct_nm = haversine_nm(pts[0][0], pts[0][1], wlat, wlon)
+                extra_nm = max(0.0, L - direct_nm)
+                agent_extra_nm[aid] = extra_nm
+                agent_extra_ratio[aid] = (L / max(1e-6, direct_nm)) - 1.0
+                
+                # Check waypoint completion (within 1 NM tolerance)
+                if len(pts) > 0:
+                    final_lat, final_lon = pts[-1]
+                    final_dist = haversine_nm(final_lat, final_lon, wlat, wlon)
+                    if final_dist <= 1.0:
+                        waypoints_reached += 1
+            else:
+                agent_extra_nm[aid] = 0.0
+                agent_extra_ratio[aid] = 0.0
+                # Assume completion for reasonable flight duration
+                if len(timestamps) > 50:
                     waypoints_reached += 1
-        
+
         total_path_length = sum(agent_path_lengths.values())
-        avg_path_length = total_path_length / max(1, total_agents)
+        avg_path_length   = total_path_length / max(1, len(agent_path_lengths))
+        total_extra_nm    = sum(agent_extra_nm.values())
+        avg_extra_nm      = total_extra_nm / max(1, len(agent_extra_nm))
+        avg_extra_ratio   = sum(agent_extra_ratio.values()) / max(1, len(agent_extra_ratio))
+
         flight_time = timestamps[-1] - timestamps[0] if len(timestamps) > 1 else 0.0
         waypoint_reached_ratio = waypoints_reached / max(1, total_agents)
         
-        # Path efficiency could be calculated as direct distance / actual path length
-        # For now, use a simple metric based on flight time vs expected time
+        # Path efficiency: use flight time vs expected time
         expected_time = 300.0  # seconds, based on typical scenario duration
         path_efficiency = min(1.0, expected_time / max(1.0, flight_time))
         
@@ -192,50 +324,136 @@ class HallucinationDetector:
             'avg_path_length_nm': float(avg_path_length),
             'flight_time_s': float(flight_time),
             'path_efficiency': float(path_efficiency),
-            'waypoint_reached_ratio': float(waypoint_reached_ratio)
+            'waypoint_reached_ratio': float(waypoint_reached_ratio),
+            # NEW:
+            'total_extra_path_nm': float(total_extra_nm),
+            'avg_extra_path_nm': float(avg_extra_nm),
+            'avg_extra_path_ratio': float(avg_extra_ratio)
         }
 
-    def _alerts_from_actions(self, actions_seq: List[Dict[str, np.ndarray]], waypoint_status: Optional[Dict] = None) -> np.ndarray:
+    def _alerts_from_actions(self, actions_seq, trajectory) -> Tuple[np.ndarray, List[Optional[Dict[str, Any]]]]:
+        """
+        Generate alert flags from agent actions using intent-aware and threat-aware filtering.
+        
+        This method filters out routine navigation actions and only triggers alerts when:
+        1. Action magnitude exceeds thresholds (heading/speed changes)
+        2. Action is not purely navigational (toward waypoint)
+        3. A near-term threat exists (TCPA/DCPA within bounds)
+        
+        Args:
+            actions_seq: Sequence of action dictionaries by timestep
+            trajectory: Episode trajectory containing positions, waypoints, and agent data
+            
+        Returns:
+            Tuple of (alert_flags_array, metadata_list) where alert_flags is a boolean
+            array indicating alert status per timestep, and metadata contains threat
+            information for each alert
+        """
         T = len(actions_seq)
-        raw_alerts = np.zeros(T, dtype=bool)
-        waypoint_status = waypoint_status or {}
-        
-        # First pass: detect raw action threshold crossings
+        alerts = np.zeros(T, dtype=bool)
+        meta: List[Optional[Dict[str, Any]]] = [None] * T
+
+        pos_seq   = trajectory.get("positions", [])
+        agents    = trajectory.get("agents", {})
+        wpts      = trajectory.get("waypoints", {})  # optional
+        wp_status = trajectory.get("waypoint_status", {})
+
+        # Detection thresholds and parameters
+        theta_min = self.theta_min_deg  # Minimum heading change for alert (degrees)
+        v_min = self.v_min_kt           # Minimum speed change for alert (knots)
+        gate_nm = max(self.los_threshold_nm, 6.0)  # Threat proximity gate (NM)
+        horizon_s = self.horizon_s      # TCPA horizon for threat detection
+        toward_wp_slack_deg = 1.0       # Tolerance for navigation intent filtering
+
         for t in range(T):
-            acts = actions_seq[t]
-            for aid, arr in acts.items():
-                # Skip agents who have reached their waypoint
-                if waypoint_status.get(aid, {}).get(t, False):
+            if t >= len(pos_seq): 
+                break
+            pos_t = pos_seq[t]
+
+            # Build current state lookups for this timestep
+            hdg_t = {aid: float(agents.get(aid, {}).get("headings", [0.0]*T)[t]) for aid in pos_t}
+            spd_t = {aid: float(agents.get(aid, {}).get("speeds", [250.0]*T)[t]) for aid in pos_t}
+
+            # Scan all agents for alert-worthy actions
+            trigger = False
+            cause = None
+
+            for aid, arr in actions_seq[t].items():
+                # Skip agents who have completed their waypoints
+                if wp_status.get(aid, {}).get(t, False): 
                     continue
+
+                # Extract action magnitudes
+                dpsi = float(np.asarray(arr).reshape(-1)[0]) if len(np.asarray(arr).reshape(-1))>0 else 0.0
+                dvkt = float(np.asarray(arr).reshape(-1)[1]) if len(np.asarray(arr).reshape(-1))>1 else 0.0
+                
+                # Filter 1: Action magnitude threshold
+                if abs(dpsi) < theta_min and abs(dvkt) < v_min:
+                    continue
+
+                # Filter 2: Intent-aware filtering - ignore navigation turns toward waypoint
+                is_nav_turn = False
+                if wpts and aid in wpts and aid in pos_t:
+                    brg_wp = _bearing_deg(pos_t[aid][0], pos_t[aid][1], wpts[aid]["lat"], wpts[aid]["lon"])
+                    hdg_now = hdg_t.get(aid, 0.0)
+                    drift_now = abs(_angdiff(brg_wp, hdg_now))
+                    drift_after = abs(_angdiff(brg_wp, (hdg_now + dpsi) % 360.0))
                     
-                arr = np.asarray(arr).reshape(-1)
-                dpsi = float(arr[0]) if arr.size > 0 else 0.0
-                dvkt = float(arr[1]) if arr.size > 1 else 0.0
-                if abs(dpsi) >= self.theta_min_deg or abs(dvkt) >= self.v_min_kt:
-                    raw_alerts[t] = True
-                    break
-        
-        # Apply debounce: 2-of-3 timesteps within sliding window
+                    # Action reduces waypoint drift - likely navigation
+                    if drift_after + toward_wp_slack_deg < drift_now:
+                        is_nav_turn = True
+                        
+                if is_nav_turn:
+                    continue
+
+                # Filter 3: Threat-aware gating - require proximate threat
+                intr, tcpa, dcpa = _threat_for_agent(pos_t, hdg_t, spd_t, aid, horizon_s, self.los_threshold_nm)
+                has_threat = (intr is not None) and (0.0 <= tcpa <= horizon_s) and (dcpa <= gate_nm)
+                
+                if not has_threat:
+                    continue
+
+                # All filters passed - trigger alert
+                trigger = True
+                cause = {
+                    "agent": aid, "intruder": intr, "tcpa_s": float(tcpa), 
+                    "dcpa_nm": float(dcpa), "dpsi_deg": float(dpsi), "dv_kt": float(dvkt)
+                }
+                break  # First qualifying agent triggers alert for this timestep
+
+            alerts[t] = trigger
+            meta[t] = cause
+
+        # Apply temporal filtering: debouncing and lag expansion
         debounced = np.zeros(T, dtype=bool)
         for t in range(T):
-            window_start = max(0, t - self.debounce_m + 1)
-            window_end = min(T, t + 1)
-            window_alerts = raw_alerts[window_start:window_end]
-            if np.sum(window_alerts) >= self.debounce_n:
+            # N-of-M debouncing: require N detections in M-step window
+            window = alerts[max(0, t - self.debounce_m + 1): t + 1]
+            if np.sum(window) >= self.debounce_n:
                 debounced[t] = True
-        
-        # Apply pre/post lag expansion
+
+        # Expand alerts with pre/post lag to capture alert periods
         final_alerts = np.zeros(T, dtype=bool)
         for t in range(T):
             if debounced[t]:
                 start = max(0, t - self.lag_pre_steps)
                 end = min(T, t + self.lag_post_steps + 1)
                 final_alerts[start:end] = True
-        
-        return final_alerts
+
+        return final_alerts, meta
 
     def _ground_truth_series(self, traj: Dict[str, Any], sep_nm: float, waypoint_status: Optional[Dict] = None) -> Tuple[np.ndarray, float, int]:
-        """Return g[t] ∈ {0,1}, min CPA, and count of conflict timesteps, excluding agents who reached waypoints."""
+        """
+        Generate ground truth conflict flags based on TCPA/DCPA calculations.
+        
+        Args:
+            traj: Episode trajectory data
+            sep_nm: Separation threshold in nautical miles
+            waypoint_status: Optional waypoint completion status by agent and timestep
+            
+        Returns:
+            Tuple of (conflict_flags_array, minimum_cpa, conflict_timestep_count)
+        """
         pos_seq = traj.get("positions", [])
         agents = traj.get("agents", {})
         waypoint_status = waypoint_status or {}
@@ -431,7 +649,7 @@ class HallucinationDetector:
                     "avg_path_length_nm": 0.0, "flight_time_s": 0.0,
                     "path_efficiency": 0.0, "waypoint_reached_ratio": 0.0,
                     "unwanted_interventions": 0, "excess_alert_time_s": 0.0,
-                    "avg_lead_time_s": 0.0}
+                    "avg_lead_time_s": 0.0, "escape_improve_hits": 0}
         
         T = min(len(pos_seq), len(actions_seq))
         if T == 0:
@@ -443,13 +661,36 @@ class HallucinationDetector:
                     "avg_path_length_nm": 0.0, "flight_time_s": 0.0,
                     "path_efficiency": 0.0, "waypoint_reached_ratio": 0.0,
                     "unwanted_interventions": 0, "excess_alert_time_s": 0.0,
-                    "avg_lead_time_s": 0.0}
+                    "avg_lead_time_s": 0.0, "escape_improve_hits": 0}
 
         # Get waypoint status from trajectory metadata if available
         waypoint_status = trajectory.get("waypoint_status", {})
         
         g, min_cpa, num_conflict_steps = self._ground_truth_series(trajectory, sep_nm, waypoint_status)
-        a = self._alerts_from_actions(actions_seq, waypoint_status)
+        a, alert_meta = self._alerts_from_actions(actions_seq, trajectory)
+
+        # Optional immediate "escape" check - CPA improvement analysis
+        escape_hits = 0
+        for t, cause in enumerate(alert_meta):
+            if not cause: continue
+            aid, intr = cause["agent"], cause["intruder"]
+            if not intr: continue
+            # get CPA before/after one step (10s) using headings/speeds at t and t+1
+            def cpa_at(step):
+                if step >= len(trajectory["positions"]): return float('inf')
+                pos = trajectory["positions"][step]
+                hdg = {a: float(trajectory["agents"][a]["headings"][step]) for a in pos}
+                spd = {a: float(trajectory["agents"][a]["speeds"][step])   for a in pos}
+                if aid not in pos or intr not in pos: return float('inf')
+                lat_i, lon_i = pos[aid]; lat_j, lon_j = pos[intr]
+                ei, ni = heading_to_unit(hdg[aid]); vi_e, vi_n = kt_to_nms(spd[aid]) * ei, kt_to_nms(spd[aid]) * ni
+                ej, nj = heading_to_unit(hdg[intr]); vj_e, vj_n = kt_to_nms(spd[intr]) * ej, kt_to_nms(spd[intr]) * nj
+                _, dc = compute_tcpa_dcpa_nm(lat_i, lon_i, vi_e, vi_n, lat_j, lon_j, vj_e, vj_n, self.horizon_s)
+                return dc
+            dc0 = cpa_at(t)
+            dc1 = cpa_at(min(t+1, len(trajectory["positions"])-1))
+            if (dc1 - dc0) > 0.3:  # ≥0.3 NM improvement next step
+                escape_hits += 1
 
         # Event windows and IoU matching
         expand_gt_steps = int(30.0 / self.action_period_s)  # ±30s for ground truth
@@ -470,6 +711,27 @@ class HallucinationDetector:
         # Calculate traditional rates for backward compatibility
         ghost = FP / max(1, FP + TN_steps) if (FP + TN_steps) > 0 else 0.0
         missed = FN / max(1, FN + TP) if (FN + TP) > 0 else 0.0
+
+        # Intervention counts and classic detection metrics
+        num_interventions_total   = len(A)
+        num_interventions_matched = len(used_A)      # = TP
+        num_interventions_false   = FP               # unmatched alerts
+
+        precision = TP / max(1, TP + FP)
+        recall    = TP / max(1, TP + FN)
+        f1_score  = 2*precision*recall / max(1e-9, (precision + recall))
+
+        alert_duty_cycle   = float(np.mean(a)) if len(a) else 0.0
+        total_alert_time_s = float(np.sum(a)) * self.action_period_s
+
+        # (optional) threat-at-alert quality
+        dcpa_at_alert, tcpa_at_alert = [], []
+        for t, meta in enumerate(alert_meta):
+            if a[t] and meta:
+                dcpa_at_alert.append(float(meta["dcpa_nm"]))
+                tcpa_at_alert.append(float(meta["tcpa_s"]))
+        avg_alert_dcpa_nm = float(np.mean(dcpa_at_alert)) if dcpa_at_alert else 0.0
+        avg_alert_tcpa_s  = float(np.mean(tcpa_at_alert))  if tcpa_at_alert  else 0.0
 
         # Resolution efficiency using matched windows
         res_metrics = self._resolution_cm(trajectory, G, matches, d_sep_nm=sep_nm, window_s=self.res_window_s)
@@ -525,6 +787,18 @@ class HallucinationDetector:
             "unwanted_interventions": int(unwanted_interventions),
             "excess_alert_time_s": float(excess_alert_time),
             "avg_lead_time_s": float(avg_lead_time),
+            "escape_improve_hits": int(escape_hits),
+            # NEW: Intervention and detection quality metrics
+            "num_interventions": int(num_interventions_total),
+            "num_interventions_matched": int(num_interventions_matched),
+            "num_interventions_false": int(num_interventions_false),
+            "precision": float(precision),
+            "recall": float(recall),
+            "f1_score": float(f1_score),
+            "alert_duty_cycle": float(alert_duty_cycle),
+            "total_alert_time_s": float(total_alert_time_s),
+            "avg_alert_dcpa_nm": float(avg_alert_dcpa_nm),
+            "avg_alert_tcpa_s": float(avg_alert_tcpa_s),
         }
         
         # Add LOS metrics

@@ -51,15 +51,36 @@ tests/                    # Test scripts and validation
 
 ### Prerequisites
 
+**Important**: This project requires PyTorch with CUDA support for GPU acceleration. Install the appropriate version for your CUDA toolkit:
+
 ```bash
-pip install ray[rllib] bluesky-simulator pandas numpy matplotlib pygame pettingzoo
+# For CUDA 12.1 (recommended)
+pip install torch>=2.0.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
+
+# For CUDA 11.8
+pip install torch>=2.0.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
+
+# CPU-only (not recommended for training)
+pip install torch>=2.0.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+```
+
+Then install remaining dependencies:
+
+```bash
+pip install ray[rllib] bluesky-simulator>=1.3.0 pandas numpy matplotlib pygame pettingzoo gymnasium
+```
+
+Or install all requirements at once:
+
+```bash
+pip install -r requirements.txt
 ```
 
 ### Training a Model
 
 ```bash
-# Train PPO on parallel scenario
-python train.py
+# Train PPO on parallel scenario (recommended)
+python atc_cli.py train --scenario parallel --algo PPO --timesteps 100000 --gpu
 
 # Train with specific configuration
 python src/training/train_frozen_scenario.py --scenario parallel --episodes 1000
@@ -119,35 +140,38 @@ Only one agent is modified per test:
 
 ## 🔧 Command Line Interface
 
+The project now includes a unified CLI (`atc_cli.py`) for all operations:
+
 ### Basic Usage
 
 ```bash
-# Auto-detect checkpoint and run with defaults
-python src/testing/targeted_shift_tester.py
+# Generate scenarios
+python atc_cli.py generate-scenarios --all
 
-# List available options
-python src/testing/targeted_shift_tester.py --list-scenarios
-python src/testing/targeted_shift_tester.py --list-checkpoints
-python src/testing/targeted_shift_tester.py --help
+# Train a model
+python atc_cli.py train --scenario head_on --algo PPO --timesteps 100000 --gpu
+
+# Run shift testing
+python atc_cli.py test-shifts --targeted --episodes 5 --viz
+
+# Analyze results
+python atc_cli.py analyze
+
+# Run full pipeline
+python atc_cli.py full-pipeline --scenario parallel --train-timesteps 50000 --test-episodes 3
 ```
 
-### Advanced Configuration
+### Available Commands
 
-```bash
-# Custom testing with specific parameters
-python src/testing/targeted_shift_tester.py \
-  --checkpoint "models/results_20231201_120000_Parallel/models" \
-  --scenario converging \
-  --episodes 20 \
-  --algorithm PPO \
-  --verbose
+- `generate-scenarios`: Create air traffic scenarios
+- `train`: Train reinforcement learning models
+- `test-shifts`: Run distribution shift testing
+- `analyze`: Analyze training/testing results
+- `visualize`: Generate trajectory plots
+- `full-pipeline`: Execute complete workflow
+- `list`: List available scenarios/checkpoints/results
 
-# Dry run to verify configuration
-python src/testing/targeted_shift_tester.py \
-  --scenario parallel \
-  --episodes 5 \
-  --dry-run
-```
+See [CLI_README.md](CLI_README.md) for comprehensive documentation.
 
 ## 📈 Results Analysis
 

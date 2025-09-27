@@ -1,19 +1,27 @@
 """
-Training on the single frozen scenario with     # Register env once
-    env_name = "marl_collision_env_v0"
-    register_env(env_name, lambda cfg: ParallelPettingZooEnv(MARLCollisionEnv(cfg)))
+Multi-Agent Reinforcement Learning Training for Air Traffic Control.
 
-    # Setup timestamped results directory
-    import time
-    timestamp = time.strftime("%Y%m%d_%H%M%S")
-    results_dir = os.path.join(repo_root, f"results_{timestamp}")
-    os.makedirs(results_dir, exist_ok=True)
+This module provides comprehensive training capabilities for MARL collision avoidance
+policies using frozen scenario configurations. The training framework supports
+multiple state-of-the-art algorithms with optimized hyperparameters and early
+stopping based on conflict-free performance.
 
-    env_config = { (PPO or SAC).
+Key Features:
+- Parameter sharing: Shared policy architecture across all agents for efficient learning
+- Multi-algorithm support: PPO, SAC, IMPALA, CQL, APPO with algorithm-specific tuning
+- Adaptive early stopping: Band-based performance evaluation prevents premature termination
+- GPU acceleration: Automatic detection and optimized configurations for CUDA devices
+- Progress tracking: Comprehensive logging of training metrics and trajectory analysis
+- Checkpoint management: Automatic saving of best-performing models during training
 
-- Multi-agent configuration with shared policy (parameter sharing).
-- Stops at 2M steps OR when 100 consecutive episodes have zero conflicts.
-- Saves checkpoints every 100k steps into models/.
+Training Philosophy:
+The trainer uses a combination of individual agent rewards (progress, safety, efficiency)
+and team-based potential-based reward shaping (PBRS) to encourage coordination while
+maintaining individual policy objectives. Training continues until stable conflict-free
+performance is achieved or maximum timesteps are reached.
+
+The framework is designed for reproducible academic research with detailed logging
+and configurable hyperparameters for systematic ablation studies.
 """
 
 import os
@@ -50,19 +58,29 @@ LOGGER = logging.getLogger("train_frozen")
 LOGGER.setLevel(logging.INFO)
 
 def check_gpu_availability():
-    """Check and report GPU availability."""
-    print(f"🔍 GPU Detection:")
-    print(f"  CUDA available: {torch.cuda.is_available()}")
-    print(f"  CUDA device count: {torch.cuda.device_count()}")
+    """
+    Detect and report available GPU resources for training acceleration.
+    
+    Returns:
+        bool: True if CUDA-compatible GPUs are available, False otherwise
+    """
     if torch.cuda.is_available():
-        for i in range(torch.cuda.device_count()):
+        gpu_count = torch.cuda.device_count()
+        print(f"GPU available: {gpu_count} device(s) detected")
+        for i in range(gpu_count):
             print(f"  GPU {i}: {torch.cuda.get_device_name(i)}")
-            print(f"  Memory: {torch.cuda.get_device_properties(i).total_memory / 1e9:.1f} GB")
+    else:
+        print("No GPU detected, using CPU")
     return torch.cuda.is_available()
 
 # Initialize Ray with better configuration to reduce warnings
 def init_ray(use_gpu: bool = False):
-    """Initialize Ray with optimized settings and GPU support."""
+    """
+    Initialize Ray distributed computing framework with optimized configuration.
+    
+    Args:
+        use_gpu: Whether to enable GPU support for training acceleration
+    """
     if not ray.is_initialized():
         init_kwargs = {
             "log_to_driver": False,
@@ -71,18 +89,27 @@ def init_ray(use_gpu: bool = False):
         }
         
         if use_gpu and torch.cuda.is_available():
-            # Use distributed mode with GPU - note: Ray init doesn't need num_gpus for basic setup
-            print(f"🚀 Initializing Ray with GPU support")
+            print("Initializing Ray with GPU support")
         else:
-            # Use local mode to avoid worker conflicts with BlueSky (CPU-only)
             init_kwargs["local_mode"] = True
-            print("🔧 Initializing Ray in local mode (CPU-only)")
+            print("Initializing Ray in local mode (CPU-only)")
         
         ray.init(**init_kwargs)
 
 
 def make_env(env_config: Dict[str, Any]):
-    """Factory for RLlib to build env instances (use ParallelPettingZooEnv wrapper)."""
+    """
+    Factory function for RLlib environment instantiation.
+    
+    Creates properly wrapped multi-agent environments compatible with RLlib's
+    training pipeline using the ParallelPettingZoo wrapper.
+    
+    Args:
+        env_config: Environment configuration dictionary
+        
+    Returns:
+        ParallelPettingZooEnv: Wrapped environment ready for RLlib training
+    """
     return ParallelPettingZooEnv(MARLCollisionEnv(env_config))
 
 
@@ -94,10 +121,27 @@ def train_frozen(repo_root: str,
                  checkpoint_every: int = 100_000,
                  use_gpu: Optional[bool] = None) -> str:
     """
-    Returns: path to final checkpoint.
+    Train multi-agent collision avoidance policy on frozen scenario.
+    
+    This function orchestrates the complete training pipeline from environment
+    setup through model checkpointing. Training continues until either stable
+    conflict-free performance is achieved or maximum timesteps are reached.
     
     Args:
-        use_gpu: If None, auto-detect GPU. If True, force GPU. If False, force CPU.
+        repo_root: Path to project root directory
+        algo: RL algorithm to use (PPO, SAC, IMPALA, CQL, APPO)
+        seed: Random seed for reproducible training
+        scenario_name: Name of scenario file (without .json extension)
+        timesteps_total: Maximum training timesteps before termination
+        checkpoint_every: Frequency of checkpoint saves (currently unused)
+        use_gpu: GPU usage preference (None=auto-detect, True=force, False=disable)
+        
+    Returns:
+        Path to final trained model checkpoint directory
+        
+    Raises:
+        FileNotFoundError: If specified scenario file doesn't exist
+        ValueError: If unsupported algorithm is specified
     """
     scenario_path = os.path.join(repo_root, "scenarios", f"{scenario_name}.json")
     if not os.path.exists(scenario_path):
@@ -118,15 +162,7 @@ def train_frozen(repo_root: str,
     # Initialize Ray with optimized settings
     init_ray(use_gpu=use_gpu)
     
-    # PERFORMANCE OPTIMIZATIONS APPLIED:
-    # - Multiple workers (4-6 depending on algorithm and GPU availability)
-    # - Larger batch sizes (16K-20K with GPU vs 4K-8K without)
-    # - Higher learning rates with GPU (5e-4 to 8e-4 vs 3e-4)
-    # - Larger neural networks with GPU (512x512 vs 256x256)
-    # - Multiple learner workers for parallel gradient updates
-    # - Increased buffer sizes and training intensity
-    # - Optimized fragment lengths and environment parallelization
-    print(f"🚀 AGGRESSIVE PERFORMANCE MODE: {'GPU-Accelerated' if use_gpu else 'CPU-Optimized'}")
+    print(f"Training mode: {'GPU-Accelerated' if use_gpu else 'CPU-Optimized'}")
 
     # Register env once
     env_name = "marl_collision_env_v0"
@@ -146,34 +182,35 @@ def train_frozen(repo_root: str,
         "action_delay_steps": 0,
         "max_episode_steps": 100,
         "separation_nm": 5.0,
-        "log_trajectories": False,
+        "log_trajectories": False,  # Disable detailed logging for speed
         "seed": seed,
         "results_dir": os.path.abspath(results_dir),  # Pass absolute path of timestamped results directory
 
-        # NEW: Enable relative observations (no raw lat/lon)
+        # Observation configuration
         "obs_mode": "relative",
         "neighbor_topk": 3,
         
-        # Collision detection settings (used for rewards only, not termination)
-        "collision_nm": 3.0,              # collision threshold for reward penalties
+        # Collision and conflict settings
+        "collision_nm": 3.0,
 
-        # Team shaping knobs (PBRS coordination rewards)
+        # Team coordination rewards
         "team_coordination_weight": 0.2,
         "team_gamma": 0.99,
-        "team_share_mode": "responsibility",   # "even" | "responsibility" | "neighbor"
+        "team_share_mode": "responsibility",
         "team_ema": 0.001,
         "team_cap": 0.005,
         "team_anneal": 1.0,
         "team_neighbor_threshold_km": 10.0,
         
-        # Individual reward components (override defaults if desired)
+        # Individual reward components
         "drift_penalty_per_sec": -0.1,
         "progress_reward_per_km": 0.02,
         "backtrack_penalty_per_km": -0.1,
         "time_penalty_per_sec": -0.0005,
-        "reach_reward": 10.0,  # Fixed: was 50.0, should match environment
-        "intrusion_penalty": -50.0,
-        "conflict_dwell_penalty_per_sec": -0.1,
+        "reach_reward": 50.0,
+        "intrusion_penalty": -50.0, 
+        "conflict_dwell_penalty_per_sec": -0.5,
+        "collision_penalty": -100.0,
     }
 
     # Shared policy (parameter-sharing) for all agents
@@ -199,39 +236,39 @@ def train_frozen(repo_root: str,
     if algo.upper() == "PPO":
         config = (PPOConfig()
                   .environment(env=env_name, env_config=env_config)
-                  .framework("torch", torch_compile_learner=False)  # Disable compilation for stability
+                  .framework("torch")  # Disable torch compilation to avoid GPU indexing issues
                   .api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
                   .env_runners(
-                      # AGGRESSIVE: Multiple workers for maximum throughput
-                      num_env_runners=4 if use_gpu else 2,  # More workers with GPU
-                      num_envs_per_env_runner=2,  # Multiple envs per worker
-                      rollout_fragment_length=400 if use_gpu else 200,  # Larger fragments with GPU
-                      max_requests_in_flight_per_env_runner=2,  # Higher parallelism
+                      num_env_runners=1,
+                      num_envs_per_env_runner=1,
+                      rollout_fragment_length=200,
+                      sample_timeout_s=300.0,
+                      max_requests_in_flight_per_env_runner=1,
                       num_cpus_per_env_runner=1,
-                      num_gpus_per_env_runner=0.1 if use_gpu else 0,  # Share GPU with workers
-                      batch_mode="complete_episodes",  # More efficient batching
+                      num_gpus_per_env_runner=0,
+                      batch_mode="truncate_episodes",
                   )
                   .training(
-                      gamma=0.995,              # Slightly higher gamma for better long-term planning
-                      lr=5e-4 if use_gpu else 3e-4,  # Higher LR with GPU for faster learning
-                      # AGGRESSIVE: Much larger batches with GPU
-                      train_batch_size=16384 if use_gpu else 8192,
-                      num_epochs=15 if use_gpu else 10,  # More epochs with GPU
-                      model={"fcnet_hiddens": [512, 512] if use_gpu else [256, 256],  # Larger network with GPU
+                      gamma=0.995,
+                      lr=5e-4 if use_gpu else 3e-4,
+                      train_batch_size=8192 if use_gpu else 4096,
+                      num_epochs=10 if use_gpu else 8,
+                      model={"fcnet_hiddens": [256, 256],
                              "fcnet_activation": "tanh",
                              "free_log_std": False},
-                      grad_clip=10.0,
-                      # AGGRESSIVE: Faster updates with more frequent training
-                      # More frequent training updates
-                      num_sgd_iter=15 if use_gpu else 10,
+                      grad_clip=1.0,
+                      num_sgd_iter=4,
                   )
                   .evaluation(
-                      evaluation_interval=1,     # Evaluate every iteration to track true performance
-                      evaluation_duration=10,    # More episodes for better evaluation
+                      evaluation_interval=5,
+                      evaluation_duration=5,
                       evaluation_duration_unit="episodes",
-                      evaluation_parallel_to_training=False,  # Sequential to avoid conflicts
-                      evaluation_num_env_runners=0,  # No separate eval workers
-                      evaluation_config={"explore": False}  # Deterministic evaluation
+                      evaluation_parallel_to_training=False,
+                      evaluation_num_env_runners=0,
+                      evaluation_config={
+                          "explore": False,
+                          "seed": 12345,
+                      }
                   )
                   .multi_agent(
                       policies=policies,
@@ -239,11 +276,16 @@ def train_frozen(repo_root: str,
                       policies_to_train=["shared_policy"],
                   )
                   .resources(
-                      # AGGRESSIVE: Maximum GPU utilization
-                      num_gpus=1 if use_gpu else 0,  # Main GPU for training
-                      num_learner_workers=2 if use_gpu else 1,  # Multiple learner workers with GPU
+                      num_gpus=1 if use_gpu else 0,
+                      num_learner_workers=0,
+                      num_cpus_per_learner_worker=1,
                   )
                   )
+                # Add PPO-specific hyperparameters
+        config["kl_coeff"] = 0.2  # KL divergence coefficient for stability
+        config["entropy_coeff"] = 0.01  # Entropy coefficient for exploration
+        config["vf_loss_coeff"] = 1.0  # Value function coefficient
+        config["clip_param"] = 0.1  # Smaller clipping for stability
         # Don't normalize actions as we handle scaling in the environment
         # Set additional config parameters
         from ray.rllib.algorithms.ppo import PPO
@@ -257,25 +299,21 @@ def train_frozen(repo_root: str,
             .framework("torch")
             .api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
             .training(
-                # FIXED: Match PPO's gamma for consistency
                 gamma=0.995,
-                lr=5e-4 if use_gpu else 3e-4,  # Higher LR with GPU
-                # AGGRESSIVE: Much larger batches
-                train_batch_size=16384 if use_gpu else 8192,
-                # AGGRESSIVE: Larger network with GPU
-                model={"fcnet_hiddens": [512, 512] if use_gpu else [256, 256], 
+                lr=5e-4 if use_gpu else 3e-4,
+                train_batch_size=8192 if use_gpu else 4096,
+                model={"fcnet_hiddens": [256, 256], 
                        "fcnet_activation": "tanh", "free_log_std": False},
-                grad_clip=10.0,
+                grad_clip=5.0,
             )
             .env_runners(
-                # AGGRESSIVE: Multiple workers for SAC throughput
-                num_env_runners=3 if use_gpu else 1,  # More workers with GPU
-                num_envs_per_env_runner=2,  # Multiple envs per worker
-                rollout_fragment_length=400 if use_gpu else 200,  # Larger fragments
-                batch_mode="truncate_episodes",     # OK for off-policy
+                num_env_runners=1 if use_gpu else 1,
+                num_envs_per_env_runner=1,
+                rollout_fragment_length='auto',
+                batch_mode="truncate_episodes",
                 create_env_on_local_worker=True,
                 num_cpus_per_env_runner=1,
-                num_gpus_per_env_runner=0.1 if use_gpu else 0,  # Share GPU
+                num_gpus_per_env_runner=0,
             )
             .evaluation(
                 # FIXED: Add evaluation like PPO
@@ -291,26 +329,22 @@ def train_frozen(repo_root: str,
             .resources(num_gpus=1 if use_gpu else 0)
         )
         
-        # AGGRESSIVE: Optimized SAC parameters for speed
-        config["tau"] = 0.01 if use_gpu else 0.005  # Faster updates with GPU
+        config["tau"] = 0.01 if use_gpu else 0.005
         config["target_entropy"] = "auto"
         config["initial_alpha"] = 0.1
-        # AGGRESSIVE: Minimal warmup for faster startup
         config["num_steps_sampled_before_learning_starts"] = 2_000 if use_gpu else 5_000
-        config["critic_lr"] = 5e-4 if use_gpu else 3e-4  # Higher LR with GPU
+        config["critic_lr"] = 5e-4 if use_gpu else 3e-4
         config["alpha_lr"] = 5e-4 if use_gpu else 3e-4
-        # AGGRESSIVE: More frequent learning
-        config["training_intensity"] = 2.0 if use_gpu else 1.0  # Train more often
+        config["training_intensity"] = 1.5 if use_gpu else 1.0
         
-        # AGGRESSIVE: Larger buffer with GPU
         config["replay_buffer_config"] = {
             "type": "MultiAgentReplayBuffer",
-            "buffer_size": 2_000_000 if use_gpu else 1_000_000,
+            "buffer_size": 1_000_000 if use_gpu else 500_000,
             "storage_unit": "timesteps",
         }
         
         config["exploration_config"] = {"type": "StochasticSampling"}
-        # Your obs are already normalized → disable external filter to avoid no-ops on Dict obs
+        # obs are already normalized → disable external filter to avoid no-ops on Dict obs
         config["observation_filter"] = "NoFilter"
         config["synchronize_filters"] = False
         
@@ -324,25 +358,21 @@ def train_frozen(repo_root: str,
             .framework("torch")
             .api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
             .env_runners(
-                # AGGRESSIVE: IMPALA excels with many workers
-                num_env_runners=6 if use_gpu else 3,  # Many workers for IMPALA
-                num_envs_per_env_runner=2,  # Multiple envs per worker
-                rollout_fragment_length=300 if use_gpu else 200,  # Larger fragments
+                num_env_runners=2 if use_gpu else 1,
+                num_envs_per_env_runner=1,
+                rollout_fragment_length='auto',
                 batch_mode="truncate_episodes",
                 create_env_on_local_worker=True,
                 num_cpus_per_env_runner=1,
-                num_gpus_per_env_runner=0.05 if use_gpu else 0,  # Small GPU share
+                num_gpus_per_env_runner=0,
             )
             .training(
-                # FIXED: Match PPO's gamma
                 gamma=0.995,
-                lr=8e-4 if use_gpu else 3e-4,  # Higher LR for IMPALA with GPU
-                # AGGRESSIVE: Large batches for IMPALA
-                train_batch_size=20480 if use_gpu else 8192,
-                # AGGRESSIVE: Larger network
-                model={"fcnet_hiddens": [512, 512] if use_gpu else [256, 256], 
+                lr=6e-4 if use_gpu else 3e-4,
+                train_batch_size=8192 if use_gpu else 4096,
+                model={"fcnet_hiddens": [256, 256], 
                        "fcnet_activation": "tanh", "free_log_std": False},
-                grad_clip=10.0,
+                grad_clip=5.0,
             )
             .evaluation(
                 # FIXED: Add evaluation like PPO
@@ -360,20 +390,18 @@ def train_frozen(repo_root: str,
             )
             .resources(
                 num_gpus=1 if use_gpu else 0,
-                num_learner_workers=3 if use_gpu else 1,  # Multiple learner workers
+                num_learner_workers=1 if use_gpu else 1,
             )
         )
         
-        # AGGRESSIVE: IMPALA parameters for maximum throughput
         config["vtrace"] = True
         config["vtrace_clip_rho_threshold"] = 1.0
         config["vtrace_clip_pg_rho_threshold"] = 1.0
-        config["entropy_coeff"] = 0.02 if use_gpu else 0.01  # Higher exploration with GPU
+        config["entropy_coeff"] = 0.01 if use_gpu else 0.01
         config["vf_loss_coeff"] = 0.5
-        # AGGRESSIVE: Larger minibatches
-        config["minibatch_size"] = 1024 if use_gpu else 512
-        config["num_epochs"] = 2 if use_gpu else 1  # More epochs with GPU
-        config["shuffle_buffer_size"] = 2048 if use_gpu else 1024  # Larger shuffle buffer
+        config["minibatch_size"] = 512 if use_gpu else 256
+        config["num_epochs"] = 1 if use_gpu else 1
+        config["shuffle_buffer_size"] = 1024 if use_gpu else 512
         
         algo_obj = IMPALA(config=config)
     elif algo.upper() == "CQL":
@@ -383,25 +411,21 @@ def train_frozen(repo_root: str,
             .framework("torch")
             .api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
             .env_runners(
-                # AGGRESSIVE: Multiple workers for CQL
-                num_env_runners=2 if use_gpu else 0,  # Some workers with GPU
-                num_envs_per_env_runner=2 if use_gpu else 1,
-                rollout_fragment_length=400 if use_gpu else 200,  # Larger fragments
+                num_env_runners=1 if use_gpu else 0,
+                num_envs_per_env_runner=1 if use_gpu else 1,
+                rollout_fragment_length='auto',
                 batch_mode="truncate_episodes",
                 create_env_on_local_worker=True,
                 num_cpus_per_env_runner=1,
-                num_gpus_per_env_runner=0.1 if use_gpu else 0,
+                num_gpus_per_env_runner=0,
             )
             .training(
-                # FIXED: Match PPO's gamma
                 gamma=0.995, 
-                lr=5e-4 if use_gpu else 3e-4,  # Higher LR with GPU
-                # AGGRESSIVE: Large batches for CQL
-                train_batch_size=16384 if use_gpu else 8192,
-                # AGGRESSIVE: Larger network
-                model={"fcnet_hiddens": [512, 512] if use_gpu else [256, 256], 
+                lr=5e-4 if use_gpu else 3e-4,
+                train_batch_size=8192 if use_gpu else 4096,
+                model={"fcnet_hiddens": [256, 256], 
                        "fcnet_activation": "tanh", "free_log_std": False},
-                grad_clip=10.0,
+                grad_clip=5.0,
             )
             .evaluation(
                 # FIXED: Add evaluation like PPO
@@ -416,36 +440,31 @@ def train_frozen(repo_root: str,
                          policies_to_train=["shared_policy"])
             .resources(
                 num_gpus=1 if use_gpu else 0,
-                num_learner_workers=2 if use_gpu else 1,  # Multiple learner workers
+                num_learner_workers=1 if use_gpu else 1,
             )
         )
         
-        # AGGRESSIVE: CQL parameters optimized for speed
-        config["tau"] = 0.01 if use_gpu else 0.005  # Faster updates
+        config["tau"] = 0.01 if use_gpu else 0.005
         config["n_step"] = 1
         config["target_entropy"] = "auto"
         config["initial_alpha"] = 0.1
-        config["critic_lr"] = 8e-4 if use_gpu else 3e-4  # Higher LR with GPU
-        # AGGRESSIVE: Less conservative, faster learning
-        config["min_q_weight"] = 3.0 if use_gpu else 5.0  # Even less conservative with GPU
+        config["critic_lr"] = 6e-4 if use_gpu else 3e-4
+        config["min_q_weight"] = 4.0 if use_gpu else 5.0
         config["num_steps_sampled_before_learning_starts"] = 1_000 if use_gpu else 5_000
-        # AGGRESSIVE: Larger buffer and more frequent updates
-        config["training_intensity"] = 2.0 if use_gpu else 1.0
+        config["training_intensity"] = 1.5 if use_gpu else 1.0
         config["replay_buffer_config"] = {
             "type": "MultiAgentReplayBuffer",
-            "buffer_size": 3_000_000 if use_gpu else 1_000_000,  # Huge buffer with GPU
+            "buffer_size": 1_000_000 if use_gpu else 500_000,
             "storage_unit": "timesteps",
         }
-        
-        # Online training (from env) by default; if you create an offline dataset later:
-        # config["input"] = "dataset" ; config["input_config"] = {"paths": ["path/to/*.json"]}
+
         algo_obj = CQL(config=config)
     elif algo.upper() == "APPO":
         config = (
             APPOConfig()
             .environment(env=env_name, env_config=env_config)
             .framework("torch")
-            # keep old API to match the rest of your code
+            # keep old API to match the rest of  code
             .api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
             .env_runners(
                 num_env_runners=1,                     # start conservative with BlueSky
@@ -457,14 +476,12 @@ def train_frozen(repo_root: str,
             .training(
                 gamma=0.995,
                 lr=3e-4,
-                train_batch_size=8192 if use_gpu else 4096,
-                grad_clip=10.0,
+                train_batch_size=4096 if use_gpu else 2048,
+                grad_clip=5.0,
                 model={
-                    "fcnet_hiddens": [256, 256],
+                    "fcnet_hiddens": [128, 128],
                     "vf_share_layers": False,
-                    "use_lstm": True,                 # set False if you don't need memory
-                    "lstm_cell_size": 128,
-                    "max_seq_len": 20,                # 20 steps = 200 s at your 10 s action step
+                    "use_lstm": False,
                     "fcnet_activation": "relu", 
                     "free_log_std": False
                 },
@@ -500,9 +517,9 @@ def train_frozen(repo_root: str,
     
     # Band-based early stopping parameters
     BAND_STEPS = int(os.environ.get("BAND_STEPS", 8200))
-    MIN_BANDS_BEFORE_ESTOP = int(os.environ.get("MIN_BANDS_BEFORE_ESTOP", 3))  # wait ≥3 bands
-    GOOD_BANDS_TO_STOP = int(os.environ.get("GOOD_BANDS_TO_STOP", 2))          # need 2 good bands
-    BAND_ZCS_TARGET = int(os.environ.get("BAND_ZCS_TARGET", 20))               # ≥20 CF episodes in band
+    MIN_BANDS_BEFORE_ESTOP = int(os.environ.get("MIN_BANDS_BEFORE_ESTOP", 3))
+    GOOD_BANDS_TO_STOP = int(os.environ.get("GOOD_BANDS_TO_STOP", 2))
+    BAND_ZCS_TARGET = int(os.environ.get("BAND_ZCS_TARGET", 20))
     next_band = BAND_STEPS
     band_idx = 0
     band_zcs = 0
@@ -640,41 +657,71 @@ def train_frozen(repo_root: str,
         with open(progress_csv, "a", newline="") as f:
             csv.writer(f).writerow([int(time.time()), it, steps, total_episodes, rew, zero_conflict_streak])
 
-        # Save checkpoint only when reward improves significantly (less negative = better)
+        # Save checkpoint when reward improves significantly
         current_reward = float(rew if isinstance(rew, (int, float)) else float('-inf'))
-        improvement_threshold = 5.0  # Only save if reward improves by at least 5 points
+        improvement_threshold = 2.0
+        
         if current_reward > (best_reward + improvement_threshold):
-            best_reward = current_reward
             temp_models_dir = os.path.join(results_dir, "checkpoints")
             os.makedirs(temp_models_dir, exist_ok=True)
-            ckpt = algo_obj.save(temp_models_dir)
-            checkpoint_name = f"{algo}_{scenario_base_name}_best_{timestamp}"
-            print(f"🎯 New best reward {current_reward:.1f}! Saved checkpoint: {checkpoint_name}")
-        
-        # Also save periodic backup every 100k steps
-        ckpt_band = steps // checkpoint_every
-        temp_models_dir = os.path.join(results_dir, "checkpoints")
-        os.makedirs(temp_models_dir, exist_ok=True)
-        have_ckpts = len([f for f in os.listdir(temp_models_dir) if f.startswith("periodic_")])
-        if ckpt_band > have_ckpts:
-            ckpt = algo_obj.save(os.path.join(temp_models_dir, f"periodic_{algo}_{scenario_base_name}_{steps//1000}k"))
-            print(f"📁 Periodic backup: {algo}_{scenario_base_name}_{steps//1000}k")
+            
+            # Clean up previous best checkpoints
+            for old_ckpt in os.listdir(temp_models_dir):
+                if old_ckpt.startswith("best_"):
+                    import shutil
+                    shutil.rmtree(os.path.join(temp_models_dir, old_ckpt), ignore_errors=True)
+            
+            best_reward = current_reward
+            ckpt = algo_obj.save(os.path.join(temp_models_dir, f"best_{steps//1000}k_r{current_reward:.1f}"))
+            checkpoint_name = f"{algo}_{scenario_base_name}_best_r{current_reward:.1f}_{timestamp}"
+            print(f"NEW BEST REWARD {current_reward:.1f}! Saved checkpoint: {checkpoint_name}")
+            print(f"Improvement: {current_reward - (best_reward - improvement_threshold):.1f} points")
 
-        # Disabled old immediate early stop to prevent premature exits
-        # if zero_conflict_streak >= 100:
-        #     print("Early stop: 100 conflict-free episodes.")
-        #     break
 
-    # Final save in main models directory with clean structure
+    # Final save: Only save if this is the best model we've seen
     final_models_dir = os.path.join(repo_root, "models", f"{algo}_{scenario_base_name}_{timestamp}")
     os.makedirs(final_models_dir, exist_ok=True)
-    ckpt = algo_obj.save(final_models_dir)
-    final_ckpt = ckpt if isinstance(ckpt, str) else str(ckpt)
+    
+    # Copy the best checkpoint to final location if it exists
+    temp_models_dir = os.path.join(results_dir, "checkpoints")
+    best_checkpoints = [f for f in os.listdir(temp_models_dir) if f.startswith("best_")] if os.path.exists(temp_models_dir) else []
+    
+    if best_checkpoints:
+        best_ckpt_dir = os.path.join(temp_models_dir, best_checkpoints[-1])
+        import shutil
+        shutil.copytree(best_ckpt_dir, final_models_dir, dirs_exist_ok=True)
+        final_ckpt = final_models_dir
+        print(f"Best model saved from checkpoint: {best_checkpoints[-1]}")
+    else:
+        ckpt = algo_obj.save(final_models_dir)
+        final_ckpt = ckpt if isinstance(ckpt, str) else str(ckpt)
+        print(f"Final model saved (no best checkpoint found)")
+    
+    # Save training metadata
+    metadata = {
+        "algorithm": algo,
+        "scenario": scenario_base_name,
+        "timestamp": timestamp,
+        "final_steps": steps,
+        "total_episodes": total_episodes,
+        "best_reward": best_reward,
+        "zero_conflict_streak": zero_conflict_streak,
+        "gpu_used": use_gpu,
+        "training_duration_iterations": it,
+    }
+    
+    metadata_file = os.path.join(final_models_dir, "training_metadata.json")
+    with open(metadata_file, 'w') as f:
+        json.dump(metadata, f, indent=2)
+    
     final_checkpoint_name = f"{algo}_{scenario_base_name}_{timestamp}"
-    print(f"🏆 Final model saved at: ./models/{final_checkpoint_name}")
-    print(f"📊 Training results saved in: {results_dir}")
+    print(f"Final model: ./models/{final_checkpoint_name}")
+    print(f"Training results: {results_dir}")
+    print(f"Best reward achieved: {best_reward:.2f}")
+    print(f"Final conflict-free streak: {zero_conflict_streak}")
     if use_gpu:
-        print(f"⚡ Training completed using GPU acceleration")
+        print(f"Training completed using GPU acceleration")
+    print(f"Training metadata saved: training_metadata.json")
     return final_ckpt
 
 

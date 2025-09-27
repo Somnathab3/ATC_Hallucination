@@ -1,12 +1,19 @@
-# analysis_safety.py
 """
-Safety margin statistics and performance metrics.
+Safety Margin Analysis and Performance Metrics Module.
 
-Provides analysis of:
-- LoS dwell fraction
-- Minimum CPA (Closest Point of Approach)
-- Action oscillation patterns
-- Rate calculations with confidence intervals
+This module provides comprehensive safety analysis capabilities for air traffic control
+system evaluation, focusing on separation violations, conflict detection performance,
+and risk assessment metrics suitable for academic evaluation.
+
+Core Functionality:
+- Loss of Separation (LoS) Analysis: Time spent below safety thresholds
+- Closest Point of Approach (CPA) Statistics: Minimum separation calculations
+- Action Oscillation Detection: Policy stability and decision consistency analysis
+- Risk Assessment: Probabilistic safety evaluation with confidence intervals
+- Performance Degradation Analysis: Comparative safety assessment between conditions
+
+The module implements robust statistical methods including Wilson score confidence
+intervals and bootstrap resampling for publication-quality uncertainty quantification.
 """
 
 import numpy as np
@@ -16,14 +23,18 @@ from typing import Tuple, Optional
 
 def dwell_fraction(df, threshold_nm=5.0):
     """
-    Calculate the fraction of time spent below safety threshold.
+    Calculate fraction of episode time spent in Loss of Separation conditions.
+    
+    This metric quantifies safety performance by measuring the proportion of
+    time aircraft spend below the minimum separation threshold, providing
+    insight into conflict severity and duration.
     
     Args:
-        df: DataFrame with trajectory data
-        threshold_nm: Safety threshold in nautical miles
+        df: DataFrame containing trajectory data with min_separation_nm column
+        threshold_nm: Minimum separation threshold in nautical miles
         
     Returns:
-        float: Fraction of time below threshold (0-1)
+        float: Fraction of timesteps below threshold (range 0.0-1.0)
     """
     if 'min_separation_nm' not in df.columns or df.empty:
         return 0.0
@@ -50,14 +61,19 @@ def min_cpa(df):
 
 def action_oscillation(df, agent_id):
     """
-    Calculate action oscillation frequency for a specific agent.
+    Analyze agent action stability through oscillation pattern detection.
+    
+    Oscillations indicate policy instability or conflicting objectives that
+    can degrade system performance and passenger comfort. This function
+    quantifies heading and speed command reversals as stability metrics.
     
     Args:
-        df: DataFrame with action data
-        agent_id: Agent identifier
+        df: DataFrame with trajectory data including action_hdg_delta_deg and
+            action_spd_delta_kt columns
+        agent_id: Target agent identifier for analysis
         
     Returns:
-        dict: Oscillation metrics
+        dict: Oscillation metrics including counts, rates, and total actions
     """
     agent_data = df[df['agent_id'] == agent_id].sort_values('step_idx')
     
