@@ -15,10 +15,12 @@ Key Features:
 - Checkpoint management: Automatic saving of best-performing models during training
 
 Training Philosophy:
-The trainer uses a combination of individual agent rewards (progress, safety, efficiency)
-and team-based potential-based reward shaping (PBRS) to encourage coordination while
-maintaining individual policy objectives. Training continues until stable conflict-free
-performance is achieved or maximum timesteps are reached.
+The trainer uses a unified reward system that eliminates double-counting penalties through:
+- Signed progress rewards (positive for advancement, negative for backtracking)
+- Unified well-clear violation penalties (entry + severity-scaled step penalties)
+- Drift improvement shaping (rewards heading optimization, not absolute penalties)
+- Enhanced team-based potential-based reward shaping (PBRS) with 5 NM sensitivity
+Training continues until stable conflict-free performance is achieved or maximum timesteps are reached.
 
 The framework is designed for reproducible academic research with detailed logging
 and configurable hyperparameters for systematic ablation studies.
@@ -119,7 +121,8 @@ def train_frozen(repo_root: str,
                  scenario_name: str = "head_on",
                  timesteps_total: int = 2_000_000,
                  checkpoint_every: int = 100_000,
-                 use_gpu: Optional[bool] = None) -> str:
+                 use_gpu: Optional[bool] = None,
+                 log_trajectories: bool = False) -> str:
     """
     Train multi-agent collision avoidance policy on frozen scenario.
     
@@ -135,6 +138,7 @@ def train_frozen(repo_root: str,
         timesteps_total: Maximum training timesteps before termination
         checkpoint_every: Frequency of checkpoint saves (currently unused)
         use_gpu: GPU usage preference (None=auto-detect, True=force, False=disable)
+        log_trajectories: Enable detailed trajectory logging (default: False for speed)
         
     Returns:
         Path to final trained model checkpoint directory
@@ -182,7 +186,7 @@ def train_frozen(repo_root: str,
         "action_delay_steps": 0,
         "max_episode_steps": 100,
         "separation_nm": 5.0,
-        "log_trajectories": False,  # Disable detailed logging for speed
+        "log_trajectories": log_trajectories,  # Enable/disable detailed logging (controllable via CLI)
         "seed": seed,
         "results_dir": os.path.abspath(results_dir),  # Pass absolute path of timestamped results directory
 
@@ -193,24 +197,34 @@ def train_frozen(repo_root: str,
         # Collision and conflict settings
         "collision_nm": 3.0,
 
-        # Team coordination rewards
-        "team_coordination_weight": 0.2,
+        # === UNIFIED REWARD SYSTEM ===
+        
+        # Enhanced team coordination (PBRS) with 5 NM sensitivity
+        "team_coordination_weight": 0.6,           # Increased coordination signal strength
         "team_gamma": 0.99,
-        "team_share_mode": "responsibility",
-        "team_ema": 0.001,
-        "team_cap": 0.005,
+        "team_share_mode": "responsibility",        # Share rewards based on agent responsibility
+        "team_ema": 0.05,                          # Faster team phi response
+        "team_cap": 0.05,                          # Higher team reward magnitude cap
         "team_anneal": 1.0,
         "team_neighbor_threshold_km": 10.0,
         
-        # Individual reward components
-        "drift_penalty_per_sec": -0.1,
-        "progress_reward_per_km": 0.02,
-        "backtrack_penalty_per_km": -0.1,
-        "time_penalty_per_sec": -0.0005,
-        "reach_reward": 50.0,
-        "intrusion_penalty": -50.0, 
-        "conflict_dwell_penalty_per_sec": -0.5,
-        "collision_penalty": -100.0,
+        # Signed progress reward (unified forward/backward movement)
+        "progress_reward_per_km": 0.04,            # Positive for progress, negative for backtracking
+        
+        # Unified well-clear violation system (no double-counting)
+        "violation_entry_penalty": -25.0,          # One-time penalty on separation violation
+        "violation_step_scale": -1.0,              # Per-step penalty scaled by severity
+        "deep_breach_nm": 1.0,                     # Steeper scaling for close approaches
+        
+        # Drift improvement shaping (rewards heading optimization)
+        "drift_improve_gain": 0.01,                # Reward per degree of drift reduction
+        "drift_deadzone_deg": 8.0,                 # Deadzone prevents oscillation penalties
+        
+        # Other individual reward components
+        "time_penalty_per_sec": -0.0005,           # Efficiency incentive
+        "reach_reward": 10.0,                       # Waypoint achievement bonus
+        "action_cost_per_unit": -0.01,             # Cost for non-neutral actions
+        "terminal_not_reached_penalty": -10.0,     # Penalty for episode termination without goal
     }
 
     # Shared policy (parameter-sharing) for all agents

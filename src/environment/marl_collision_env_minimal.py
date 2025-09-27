@@ -51,19 +51,21 @@ DEFAULT_TEAM_CAP = 0.01                     # Maximum team reward magnitude
 DEFAULT_TEAM_ANNEAL = 1.0                   # Team reward annealing factor
 DEFAULT_TEAM_NEIGHBOR_THRESHOLD_KM = 10.0   # Neighbor proximity threshold
 
-# Individual reward component defaults (per-agent shaping)
-DEFAULT_DRIFT_PENALTY_PER_SEC = -0.1        # Penalty for heading drift from waypoint
-DEFAULT_PROGRESS_REWARD_PER_KM = 0.02       # Reward for progress toward waypoint
-DEFAULT_BACKTRACK_PENALTY_PER_KM = -0.1     # Penalty for moving away from waypoint
-DEFAULT_TIME_PENALTY_PER_SEC = -0.0005      # Small time penalty to encourage efficiency
-DEFAULT_REACH_REWARD = 50.0                 # Bonus for reaching waypoint
-DEFAULT_INTRUSION_PENALTY = -50.0           # Penalty for entering conflict zone
-DEFAULT_CONFLICT_DWELL_PENALTY_PER_SEC = -0.5  # Penalty for remaining in conflict
-DEFAULT_COLLISION_PENALTY = -100.0          # Severe penalty for collision
+# Unified reward system defaults (individual agent components)
+DEFAULT_PROGRESS_REWARD_PER_KM = 0.04       # Signed progress reward (positive for forward, negative for backtrack)
+DEFAULT_TIME_PENALTY_PER_SEC = -0.0005      # Time penalty to encourage efficiency
+DEFAULT_REACH_REWARD = 10.0                 # Bonus for reaching waypoint
+DEFAULT_VIOLATION_ENTRY_PENALTY = -25.0     # One-time penalty on well-clear violation entry
+DEFAULT_VIOLATION_STEP_SCALE = -1.0         # Per-step violation penalty scaling factor
+DEFAULT_DEEP_BREACH_NM = 1.0                # Threshold for steeper penalty scaling
+DEFAULT_DRIFT_IMPROVE_GAIN = 0.01           # Reward per degree of drift improvement
+DEFAULT_DRIFT_DEADZONE_DEG = 8.0            # Deadzone to prevent drift oscillation penalties
+DEFAULT_ACTION_COST_PER_UNIT = -0.01        # Cost for non-neutral actions
+DEFAULT_TERMINAL_NOT_REACHED_PENALTY = -10.0 # Penalty for episode termination without reaching goal
 
 # Physical constants and thresholds
 NM_TO_KM = 1.852                 # Nautical miles to kilometers conversion
-DRIFT_NORM_DEN = 180.0           # Normalization factor for heading drift penalty
+DRIFT_NORM_DEN = 180.0           # Normalization factor for heading drift calculations
 WAYPOINT_THRESHOLD_NM = 1.0      # Distance threshold for waypoint capture
 
 
@@ -112,6 +114,29 @@ def haversine_nm(lat1_deg: float, lon1_deg: float, lat2_deg: float, lon2_deg: fl
 
 
 class MARLCollisionEnv(ParallelEnv):
+    """
+    Multi-Agent Reinforcement Learning Environment for Air Traffic Collision Avoidance.
+    
+    This environment simulates air traffic control scenarios where multiple aircraft
+    must navigate to their destinations while avoiding conflicts and collisions.
+    The environment integrates with BlueSky for realistic flight dynamics and
+    provides a unified reward system with enhanced team coordination.
+    
+    Key Features:
+    - BlueSky integration for realistic aircraft simulation
+    - Unified well-clear violation system (no double-counting penalties)
+    - Drift improvement shaping (rewards progress toward optimal heading)
+    - Enhanced team-based potential-based reward shaping (PBRS)
+    - Comprehensive trajectory logging for analysis
+    - Support for various air traffic control scenarios
+    
+    Unified Reward Structure:
+    - Progress: Signed reward for movement toward/away from waypoint
+    - Violations: Entry penalty + severity-scaled step penalties for well-clear violations
+    - Drift Improvement: Rewards for reducing heading drift (not absolute penalties)
+    - Team Coordination: Enhanced PBRS with 5 NM sensitivity for better cooperation
+    - Action Costs: Penalties for non-neutral control inputs
+    """
     metadata = {"name": "marl_collision_env", "render_modes": []}
     
     @property 
@@ -205,17 +230,30 @@ class MARLCollisionEnv(ParallelEnv):
         self._team_phi      = None
         self._team_dphi_ema = 0.0
         
-        # Individual reward configuration (allow override via env_config)
-        self.r_drift_per_s     = float(env_config.get("drift_penalty_per_sec", DEFAULT_DRIFT_PENALTY_PER_SEC))
-        self.r_prog_per_km     = float(env_config.get("progress_reward_per_km", DEFAULT_PROGRESS_REWARD_PER_KM))
-        self.r_back_per_km     = float(env_config.get("backtrack_penalty_per_km", DEFAULT_BACKTRACK_PENALTY_PER_KM))
-        self.r_time_per_s      = float(env_config.get("time_penalty_per_sec", DEFAULT_TIME_PENALTY_PER_SEC))
-        self.r_reach_bonus     = float(env_config.get("reach_reward", DEFAULT_REACH_REWARD))
-        self.r_intrusion       = float(env_config.get("intrusion_penalty", DEFAULT_INTRUSION_PENALTY))
-        self.r_dwell_per_s     = float(env_config.get("conflict_dwell_penalty_per_sec", DEFAULT_CONFLICT_DWELL_PENALTY_PER_SEC))
-        self.r_collision       = float(env_config.get("collision_penalty", DEFAULT_COLLISION_PENALTY))
+        # Unified individual reward configuration
+        self.r_prog_per_km = float(env_config.get("progress_reward_per_km", DEFAULT_PROGRESS_REWARD_PER_KM))
+        self.r_time_per_s = float(env_config.get("time_penalty_per_sec", DEFAULT_TIME_PENALTY_PER_SEC))
+        self.r_reach_bonus = float(env_config.get("reach_reward", DEFAULT_REACH_REWARD))
         self.action_cost_per_unit = float(env_config.get("action_cost_per_unit", -0.01))
         self.terminal_not_reached_penalty = float(env_config.get("terminal_not_reached_penalty", -10.0))
+        
+        # Unified well-clear violation parameters (unified conflict handling)
+        self.sep_nm = float(env_config.get("separation_nm", 5.0))  # already present
+        self.violation_entry_penalty = float(env_config.get("violation_entry_penalty", -25.0))
+        self.violation_step_scale    = float(env_config.get("violation_step_scale", -1.0))  # per-step at full breach
+        self.deep_breach_nm          = float(env_config.get("deep_breach_nm", 1.0))  # for stronger scaling near collision
+        
+        # NEW: Drift improvement shaping (replace absolute drift penalty)
+        self.drift_improve_gain      = float(env_config.get("drift_improve_gain", 0.01))  # per degree improvement
+        self.drift_deadzone_deg      = float(env_config.get("drift_deadzone_deg", 8.0))
+        
+        # Enhanced team PBRS configuration (overwrite defaults if specified)
+        if "team_coordination_weight" in env_config:
+            self.team_w = float(env_config["team_coordination_weight"])
+        if "team_ema" in env_config:
+            self.team_ema_a = float(env_config["team_ema"])
+        if "team_cap" in env_config:
+            self.team_cap = float(env_config["team_cap"])
         
         # Per-episode memory
         self._prev_wp_dist_nm: Dict[str, Optional[float]] = {aid: None for aid in self.possible_agents}
@@ -226,6 +264,11 @@ class MARLCollisionEnv(ParallelEnv):
         self._waypoint_reached_this_step = {aid: False for aid in self.possible_agents}  # Track if agent reached waypoint THIS step
         self._agent_done = {aid: False for aid in self.possible_agents}  # Track if agent is completely done
         self._agent_wpreached = {aid: False for aid in self.possible_agents}  # Persistent waypoint reached flag
+        
+        # NEW: Per-agent state tracking for unified reward system
+        self._prev_in_violation = {aid: False for aid in self.possible_agents}
+        self._prev_minsep_nm    = {aid: float("inf") for aid in self.possible_agents}
+        self._prev_drift_abs    = {aid: 0.0 for aid in self.possible_agents}
 
         # Baselines captured from the scenario (per agent)
         self._base_cas_kt = {aid: 250.0 for aid in self.possible_agents}  # overwritten on reset
@@ -235,9 +278,9 @@ class MARLCollisionEnv(ParallelEnv):
         # Environmental shift speed bounds scaling
         self._spd_bounds_scale = {aid: (1.0, 1.0) for aid in self.possible_agents}
         
-        # Collision detection settings (used for rewards but not termination)
+        # Physical collision threshold (used for detection, not termination)
         self.collision_nm = float(env_config.get("collision_nm", 1.0))
-        # Note: collision_debounce_steps removed since no collision-based termination
+        # Note: Collisions trigger unified violation penalties, eliminating double-counting
 
         # Set observation spaces based on mode
         if self.obs_mode == "relative":
@@ -531,6 +574,11 @@ class MARLCollisionEnv(ParallelEnv):
         self._agent_done = {aid: False for aid in self.possible_agents}  # Reset agent done flags
         self._agent_wpreached = {aid: False for aid in self.possible_agents}  # Reset persistent waypoint flags
         
+        # Reset unified reward state tracking
+        self._prev_in_violation = {aid: False for aid in self.possible_agents}
+        self._prev_minsep_nm    = {aid: float("inf") for aid in self.possible_agents}
+        self._prev_drift_abs    = {aid: 0.0 for aid in self.possible_agents}
+        
         # Reset real-time hallucination detection
         if self._enable_hallucination_detection and self._hallucination_detector:
             self._rt_trajectory = {
@@ -729,115 +777,105 @@ class MARLCollisionEnv(ParallelEnv):
                     act_cost = self.action_cost_per_unit * (abs(norm[0]) + abs(norm[1]))
                 else:  # Fallback to deg/kt deltas
                     act_cost = self.action_cost_per_unit * float(np.abs(self._prev_actions_deg_kt[aid]).sum())
-                parts = {"los_penalty": 0.0, "act_cost": float(act_cost), "progress": 0.0, "backtrack": 0.0,
-                        "drift": 0.0, "time": -1.0, "dwell": 0.0, 
-                        "intrusion": 0.0, "collision": 0.0, "reach": 0.0, "total": float(r + act_cost)}
+                parts = {"act_cost": float(act_cost), "progress": 0.0, "drift": 0.0,
+                        "time": -1.0, "violate_entry": 0.0, "violate_step": 0.0, 
+                        "reach": 0.0, "terminal": 0.0, "total": float(r + act_cost)}
             else:
-                # Special handling for agents who have already reached their waypoint
+                # Get waypoint data
+                wp_lat, wp_lon = self._agent_waypoints[aid]
+                d_wp_nm = haversine_nm(float(bs.traf.lat[idx]), float(bs.traf.lon[idx]), wp_lat, wp_lon)
+                prev_wp = self._prev_wp_dist_nm.get(aid, None)
+                
+                # Calculate per-agent minimum separation for unified violation system
+                agent_min_sep = 200.0  # default
+                agent_distances = pairwise_dist_nm.get(aid, {})
+                if agent_distances:
+                    agent_min_sep = min(agent_distances.values())
+                
+                # === REFACTORED UNIFIED REWARD SYSTEM ===
+                
+                # 1) Signed progress (single term) - positive when getting closer, negative when going away
+                r_progress = 0.0
+                if prev_wp is not None:
+                    delta_nm = prev_wp - d_wp_nm
+                    r_progress = (delta_nm * NM_TO_KM) * self.r_prog_per_km  # Unified signed progress
+                self._prev_wp_dist_nm[aid] = d_wp_nm
+                
+                # 2) Drift improvement shaping (replace absolute drift penalty)
+                try:
+                    qdr, _ = bs.tools.geo.kwikqdrdist(float(bs.traf.lat[idx]), float(bs.traf.lon[idx]), wp_lat, wp_lon)
+                except:
+                    qdr = 0.0
+                hdg = float(getattr(bs.traf, 'hdg', [0])[idx] if hasattr(bs.traf, 'hdg') else 0)
+                drift_abs = abs((hdg - qdr + 540) % 360 - 180)  # |shortest-angle|
+                prev_drift = self._prev_drift_abs.get(aid)
+                r_drift = 0.0
+                if prev_drift is not None:
+                    # Reward only improvements beyond a deadzone to avoid oscillation penalties
+                    gain = self.drift_improve_gain
+                    improve = max(0.0, (prev_drift - drift_abs) - self.drift_deadzone_deg)
+                    r_drift = gain * improve  # e.g., 15° improvement => +0.15 with gain 0.01
+                self._prev_drift_abs[aid] = drift_abs
+                
+                # 3) Unified well-clear violation shaping (no double counting)
+                dmin = agent_min_sep
+                in_violation = dmin < self.sep_nm
+
+                # (a) one-time entry penalty on rising edge
+                r_violate_entry = 0.0
+                if in_violation and not self._prev_in_violation[aid]:
+                    r_violate_entry = self.violation_entry_penalty  # e.g., -25 once
+
+                # (b) per-step severity: linear in how deep the breach is; steeper inside deep_breach_nm
+                r_violate_step = 0.0
+                if in_violation:
+                    depth = (self.sep_nm - dmin) / self.sep_nm  # 0..1
+                    # extra weight if very deep
+                    deep_boost = 1.0 + 1.5 * max(0.0, (self.deep_breach_nm - dmin) / self.deep_breach_nm)
+                    r_violate_step = self.violation_step_scale * depth * deep_boost  # e.g., up to ≈ -2.5 at very deep
+
+                # update state
+                self._prev_in_violation[aid] = in_violation
+                self._prev_minsep_nm[aid] = dmin
+                
+                # 4) Other components
+                # Action cost based on normalized actions
+                norm = normalized_actions.get(aid, np.zeros(2, np.float32))
+                act_cost = self.action_cost_per_unit * (abs(norm[0]) + abs(norm[1]))
+                
+                # Time penalty (per sec)
+                r_time = self.r_time_per_s * dt
+                
+                # Special handling for waypoint-reached agents (reduce time penalty)
                 if self._waypoint_reached[aid]:
-                    # Simplified reward for completed agents: just avoid conflicts and minimize cost
-                    r_dwell = 0.0; r_intr = 0.0; r_collision = 0.0
-                    if conflict_flags[aid]:
-                        r_intr = self.r_intrusion
-                        r_dwell = self.r_dwell_per_s * dt
-                    if collision_flags[aid]:
-                        r_collision = self.r_collision
-                    
-                    los_penalty = 0.0  # don't double-count conflicts
-                    act_cost = self.action_cost_per_unit * float(np.abs(self._prev_actions_deg_kt[aid]).sum())
-                    r_time = self.r_time_per_s * dt * 0.1  # Reduced time penalty for completed agents
-                    
-                    # Give reach bonus ONLY on the first step when waypoint is reached (not subsequent steps)
-                    r_reach = self.r_reach_bonus if first_time_reach[aid] else 0.0
-                    
-                    r_total = los_penalty + r_intr + r_dwell + r_collision + act_cost + r_time + r_reach
-                    
-                    parts = {
-                        "los_penalty": float(los_penalty), "act_cost": float(act_cost), 
-                        "progress": 0.0, "backtrack": 0.0, "drift": 0.0,
-                        "time": float(r_time), "dwell": float(r_dwell), "intrusion": float(r_intr),
-                        "collision": float(r_collision), "reach": float(r_reach), "terminal": 0.0, "total": float(r_total),
-                    }
-                else:
-                    # Normal reward calculation for agents still working toward waypoint
-                    # Get waypoint data
-                    wp_lat, wp_lon = self._agent_waypoints[aid]
-                    d_wp_nm = haversine_nm(float(bs.traf.lat[idx]), float(bs.traf.lon[idx]), wp_lat, wp_lon)
-                    prev_wp = self._prev_wp_dist_nm.get(aid, None)
-                    
-                    # 1) Progress vs backtrack rewards (km)
-                    r_progress = 0.0; r_backtrack = 0.0
-                    if prev_wp is not None:
-                        delta_nm = prev_wp - d_wp_nm
-                        if delta_nm > 0:
-                            r_progress = (delta_nm * NM_TO_KM) * self.r_prog_per_km
-                        elif delta_nm < 0:
-                            r_backtrack = (abs(delta_nm) * NM_TO_KM) * self.r_back_per_km
-                    self._prev_wp_dist_nm[aid] = d_wp_nm
-                    
-                    # 2) Heading alignment (per sec) - drop competing drift penalty
-                    try:
-                        qdr, _ = bs.tools.geo.kwikqdrdist(float(bs.traf.lat[idx]), float(bs.traf.lon[idx]), wp_lat, wp_lon)
-                    except:
-                        qdr = 0.0
-                    hdg = float(getattr(bs.traf, 'hdg', [0])[idx] if hasattr(bs.traf, 'hdg') else 0)
-                    drift = hdg - qdr
-                    while drift > 180: drift -= 360
-                    while drift < -180: drift += 360
-                    r_drift = self.r_drift_per_s * dt * abs(drift) / DRIFT_NORM_DEN  # Enable drift penalty
-                    
-                    # 3) Time penalty (per sec)
-                    r_time = self.r_time_per_s * dt
-                    
-                    # 4) Conflict dwell penalty, intrusion penalty, and collision penalty
-                    r_dwell = 0.0; r_intr = 0.0; r_collision = 0.0
-                    if conflict_flags[aid]:
-                        r_intr = self.r_intrusion
-                        r_dwell = self.r_dwell_per_s * dt
-                    if collision_flags[aid]:
-                        r_collision = self.r_collision
-                    
-                    # 5) Action cost based on normalized actions
-                    norm = normalized_actions.get(aid, np.zeros(2, np.float32))
-                    act_cost = self.action_cost_per_unit * (abs(norm[0]) + abs(norm[1]))
-                    
-                    # 6) Disable los_penalty to avoid double-counting conflicts
-                    los_penalty = 0.0   # don't double-count conflicts
-                    
-                    # 7) Reach bonus (give ONLY on first step when reaching waypoint, not subsequent steps)
-                    r_reach = self.r_reach_bonus if first_time_reach[aid] else 0.0
-                    
-                    # 8) Terminal penalty for not reaching waypoint at episode end
-                    r_terminal = 0.0
-                    if self._step_idx >= self.max_episode_steps and not self._waypoint_reached[aid]:
-                        r_terminal = self.terminal_not_reached_penalty
-                    
-                    # Total reward
-                    r_total = (
-                        los_penalty +  # disabled (set to 0) to avoid double-counting
-                        r_intr + r_dwell + r_collision +
-                        r_progress + r_backtrack +
-                        r_drift +  # drift penalty
-                        act_cost +     # action cost based on normalized actions
-                        r_time +
-                        r_reach +
-                        r_terminal     # terminal penalty for not reaching waypoint
-                    )
-                    
-                    parts = {
-                        "los_penalty": float(los_penalty),
-                        "act_cost": float(act_cost),
-                        "progress": float(r_progress),
-                        "backtrack": float(r_backtrack),
-                        "drift": float(r_drift),
-                        "time": float(r_time),
-                        "dwell": float(r_dwell),
-                        "intrusion": float(r_intr),
-                        "collision": float(r_collision),
-                        "reach": float(r_reach),
-                        "terminal": float(r_terminal),
-                        "total": float(r_total),
-                    }
+                    r_time = r_time * 0.1  # Reduced time penalty for completed agents
+                
+                # Reach bonus (give ONLY on first step when reaching waypoint, not subsequent steps)
+                r_reach = self.r_reach_bonus if first_time_reach[aid] else 0.0
+                
+                # Terminal penalty for not reaching waypoint at episode end
+                r_terminal = 0.0
+                if self._step_idx >= self.max_episode_steps and not self._waypoint_reached[aid]:
+                    r_terminal = self.terminal_not_reached_penalty
+                
+                # Total reward with unified components
+                r_total = (
+                    r_progress + r_drift + r_violate_entry + r_violate_step +
+                    act_cost + r_time + r_reach + r_terminal
+                )
+                
+                # Unified reward breakdown for logging
+                parts = {
+                    "act_cost": float(act_cost),
+                    "progress": float(r_progress),
+                    "drift": float(r_drift),
+                    "time": float(r_time),
+                    "violate_entry": float(r_violate_entry),
+                    "violate_step": float(r_violate_step),
+                    "reach": float(r_reach),
+                    "terminal": float(r_terminal),
+                    "total": float(r_total),
+                }
             
             rewards[aid] = float(parts.get("total", r_total if 'r_total' in locals() else 0.0))
             reward_parts_by_agent[aid] = parts
@@ -1285,19 +1323,17 @@ class MARLCollisionEnv(ParallelEnv):
                 else:
                     row[key] = float(pairwise_dist_nm.get(aid, {}).get(other_id, np.nan))
             
-            # Comprehensive reward breakdown
+            # Unified reward breakdown - only new components
             parts = reward_parts_by_agent.get(aid, {})
             row.update({
-                "reward_los_penalty": parts.get("los_penalty", 0.0),
                 "reward_act_cost": parts.get("act_cost", 0.0),
                 "reward_progress": parts.get("progress", 0.0),
-                "reward_backtrack": parts.get("backtrack", 0.0),
                 "reward_drift": parts.get("drift", 0.0),
                 "reward_time": parts.get("time", 0.0),
-                "reward_dwell": parts.get("dwell", 0.0),
-                "reward_intrusion": parts.get("intrusion", 0.0),
-                "reward_collision": parts.get("collision", 0.0),
+                "reward_violate_entry": parts.get("violate_entry", 0.0),
+                "reward_violate_step": parts.get("violate_step", 0.0),
                 "reward_reach": parts.get("reach", 0.0),
+                "reward_terminal": parts.get("terminal", 0.0),
                 "reward_total": parts.get("total", 0.0),
                 "reward_team": parts.get("team", 0.0),
                 "team_phi": parts.get("team_phi", 0.0),
@@ -1355,7 +1391,11 @@ class MARLCollisionEnv(ParallelEnv):
         self._traj_rows = []
 
     def _compute_team_phi(self) -> float:
-        """Compute team potential Phi(s) based on minimum pairwise separation (0..1 in [0..10 NM])."""
+        """Compute team potential Phi(s) with enhanced sensitivity near 5 NM threshold.
+        
+        Potential function: 0 at 0 NM, 0.5 at 5 NM, 1 at ≥10 NM (piecewise-linear with kink at sep_nm)
+        This provides stronger gradients near the well-clear boundary for better coordination.
+        """
         ids = self.agents
         if not ids or len(ids) < 2:
             return 1.0  # Maximum potential when no conflicts possible
@@ -1383,6 +1423,10 @@ class MARLCollisionEnv(ParallelEnv):
         if min_separation_nm == float('inf'):
             return 1.0
             
-        # Normalize min separation to [0, 1] range for [0, 10 NM]
-        phi_t = np.clip(min_separation_nm / 10.0, 0.0, 1.0)
-        return float(phi_t)
+        # Enhanced potential function with kink at separation threshold
+        s = max(0.0, min_separation_nm)
+        if s <= self.sep_nm:
+            phi_t = 0.5 * (s / self.sep_nm)        # [0..0.5] inside LoS, steep slope
+        else:
+            phi_t = 0.5 + 0.5 * min((s - self.sep_nm) / (10.0 - self.sep_nm), 1.0)  # [0.5..1]
+        return float(np.clip(phi_t, 0.0, 1.0))

@@ -18,6 +18,7 @@ Usage examples:
     # Train models
     python atc_cli.py train --scenario head_on --algo PPO --timesteps 100000
     python atc_cli.py train --scenario all --timesteps 50000 --checkpoint-every 10000
+    python atc_cli.py train --algo PPO --timesteps 2000000 --scenario canonical_crossing --log-trajectories
     
     # Run shift testing
     python atc_cli.py test-shifts --checkpoint latest --scenario parallel --episodes 5
@@ -107,7 +108,7 @@ class ATCController:
             return []
     
     def train_model(self, scenario_names: Union[str, List[str]], algo: str = "PPO", timesteps: int = 100000, 
-                   checkpoint_every: int = 10000, **kwargs) -> Optional[str]:
+                   checkpoint_every: int = 10000, log_trajectories: bool = False, **kwargs) -> Optional[str]:
         """Train a model on the specified scenario(s) and algorithm(s)."""
         try:
             from src.training.train_frozen_scenario import train_frozen
@@ -151,6 +152,7 @@ class ATCController:
                         scenario_name=current_scenario,
                         timesteps_total=timesteps,
                         checkpoint_every=checkpoint_every,
+                        log_trajectories=log_trajectories,
                         **kwargs
                     )
                     
@@ -329,7 +331,8 @@ class ATCController:
     
     def full_pipeline(self, scenario_name: str, algo: str = "PPO", 
                      train_timesteps: int = 50000, test_episodes: int = 3,
-                     targeted_shifts: bool = True, generate_viz: bool = True) -> Dict[str, Any]:
+                     targeted_shifts: bool = True, generate_viz: bool = True,
+                     log_trajectories: bool = False) -> Dict[str, Any]:
         """Run the complete pipeline: scenario generation → training → testing → analysis."""
         logger.info("🚀 Starting full pipeline execution")
         
@@ -358,7 +361,8 @@ class ATCController:
                 scenario_names=[scenario_name],
                 algo=algo,
                 timesteps=train_timesteps,
-                checkpoint_every=max(1000, train_timesteps // 10)
+                checkpoint_every=max(1000, train_timesteps // 10),
+                log_trajectories=log_trajectories
             )
             pipeline_results["steps"]["training"] = {
                 "success": checkpoint is not None,
@@ -644,6 +648,8 @@ def main():
                              help="Enable GPU training (auto-detect if available)")
     train_parser.add_argument("--no-gpu", action="store_true",
                              help="Force CPU-only training")
+    train_parser.add_argument("--log-trajectories", action="store_true",
+                             help="Enable detailed trajectory logging (default: False for faster training)")
     
     # Shift testing
     test_parser = subparsers.add_parser("test-shifts", help="Run distribution shift testing")
@@ -690,6 +696,8 @@ def main():
                                  help="Use unison shifts instead of targeted")
     pipeline_parser.add_argument("--no-viz", action="store_true",
                                  help="Skip visualization generation")
+    pipeline_parser.add_argument("--log-trajectories", action="store_true",
+                                 help="Enable detailed trajectory logging during training")
     
     # List commands
     list_parser = subparsers.add_parser("list", help="List available resources")
@@ -745,7 +753,8 @@ def main():
                 algo=args.algo,
                 timesteps=args.timesteps,
                 checkpoint_every=checkpoint_every,
-                use_gpu=use_gpu
+                use_gpu=use_gpu,
+                log_trajectories=args.log_trajectories
             )
             if checkpoint:
                 print(f"Training completed. Checkpoint: {checkpoint}")
@@ -797,7 +806,8 @@ def main():
                 train_timesteps=args.train_timesteps,
                 test_episodes=args.test_episodes,
                 targeted_shifts=not args.no_targeted,
-                generate_viz=not args.no_viz
+                generate_viz=not args.no_viz,
+                log_trajectories=args.log_trajectories
             )
             
             print("Pipeline Results:")
