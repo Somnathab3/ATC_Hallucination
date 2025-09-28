@@ -102,15 +102,16 @@ def make_head_on(approach_nm: float = 18.0) -> str:
                 "Inevitable conflict without evasive action.")
 
 # ---------- 2) T-FORMATION (3 aircraft) ----------
-def make_t_formation(arm_nm: float = 20.0, stem_nm: float = 16.0, stem_x_nm: float = -6.0) -> str:
+def make_t_formation(arm_nm: float = 7.5, stem_nm: float = 10.0, stem_x_nm: float = -7.0) -> str:
     """
     Horizontal 'top bar' through center (west->east).
     Vertical 'stem' offset to the west by stem_x_nm, moving north to meet the bar.
+    FIXED: Reduced distances for better convergence within episode limits.
     """
-    # Bar aircraft: west -> east
+    # Bar aircraft: west -> east (MUCH shorter distance)
     bar_lat, bar_lon = pos_offset(CENTER_LAT, CENTER_LON, 0.0, -arm_nm)
     bar_wp_lat, bar_wp_lon = pos_offset(CENTER_LAT, CENTER_LON, 0.0, +arm_nm)
-    # Stem aircraft: south -> north, offset x=-6 NM
+    # Stem aircraft: south -> north, offset further west for staggered timing
     stem1_lat, stem1_lon = pos_offset(CENTER_LAT, CENTER_LON, -stem_nm, stem_x_nm)
     stem2_lat, stem2_lon = pos_offset(CENTER_LAT, CENTER_LON, -stem_nm*0.6, stem_x_nm)  # follower on the stem
 
@@ -118,32 +119,34 @@ def make_t_formation(arm_nm: float = 20.0, stem_nm: float = 16.0, stem_x_nm: flo
         {"id":"A1","type":"A320","lat":bar_lat,"lon":bar_lon,"hdg_deg": 90.0,"spd_kt":SPD_KT,"alt_ft":ALT_FT,
          "waypoint":{"lat": bar_wp_lat, "lon": bar_wp_lon}},
         {"id":"A2","type":"A320","lat":stem1_lat,"lon":stem1_lon,"hdg_deg":  0.0,"spd_kt":SPD_KT,"alt_ft":ALT_FT,
-         "waypoint":{"lat": CENTER_LAT+nm_to_lat(+stem_nm), "lon": CENTER_LON+nm_to_lon(stem_x_nm, CENTER_LAT)}},
-        {"id":"A3","type":"A320","lat":stem2_lat,"lon":stem2_lon,"hdg_deg":  0.0,"spd_kt":SPD_KT,"alt_ft":ALT_FT,
          "waypoint":{"lat": CENTER_LAT+nm_to_lat(+stem_nm*0.8), "lon": CENTER_LON+nm_to_lon(stem_x_nm, CENTER_LAT)}},
+        {"id":"A3","type":"A320","lat":stem2_lat,"lon":stem2_lon,"hdg_deg":  0.0,"spd_kt":SPD_KT,"alt_ft":ALT_FT,
+         "waypoint":{"lat": CENTER_LAT+nm_to_lat(+stem_nm*0.6), "lon": CENTER_LON+nm_to_lon(stem_x_nm, CENTER_LAT)}},
     ]
-    return save("t_formation", agents, "Three-aircraft 'T' formation: horizontal bar through center and a northbound stem 6 NM west.")
+    return save("t_formation", agents, "FIXED: Three-aircraft 'T' formation with reduced distances (7.5 NM arm, 10 NM stem, -7 NM offset) for better convergence.")
 
 # ---------- 3) PARALLEL (3 aircraft, same track) ----------
-def make_parallel(track_x_nm: float = 0.0, gaps_nm: float = 6.0, south_nm: float = 24.0) -> str:
+def make_parallel(track_x_nm: float = 0.0, gaps_nm: float = 8.0, south_nm: float = 18.0) -> str:
     """
     Three aircraft flying north in trail on a single track (parallel same-lane).
     Equal speeds produce sustained in-trail separation pressure.
+    FIXED: Reduced distances and closer waypoint for better convergence.
     """
     a1_lat, a1_lon = pos_offset(CENTER_LAT, CENTER_LON, -south_nm,           track_x_nm)
     a2_lat, a2_lon = pos_offset(CENTER_LAT, CENTER_LON, -south_nm + gaps_nm, track_x_nm)
     a3_lat, a3_lon = pos_offset(CENTER_LAT, CENTER_LON, -south_nm + 2*gaps_nm, track_x_nm)
 
-    wp_lat, wp_lon = pos_offset(CENTER_LAT, CENTER_LON, +south_nm, track_x_nm)
+    # Waypoint 12 NM north of center (reduced from south_nm=24 to 12)
+    wp_lat, wp_lon = pos_offset(CENTER_LAT, CENTER_LON, +12.0, track_x_nm)
     agents = []
     for i,(la,lo) in enumerate([(a1_lat,a1_lon),(a2_lat,a2_lon),(a3_lat,a3_lon)], start=1):
         agents.append({"id":f"A{i}","type":"A320","lat":la,"lon":lo,"hdg_deg":0.0,"spd_kt":SPD_KT,"alt_ft":ALT_FT,
                        "waypoint":{"lat": wp_lat, "lon": wp_lon}})
-    return save("parallel", agents, "Three-aircraft parallel/in-trail northbound on one track with 6 NM initial gaps.")
+    return save("parallel", agents, "FIXED: Three-aircraft parallel/in-trail northbound with 8 NM gaps and 12 NM waypoint distance for better convergence.")
 
 # ---------- 4) CONVERGING (each AC to its own near-by waypoint) ----------
 def make_converging(
-    radius_nm: float = 25.0,
+    radius_nm: float = 12.0,
     bearings_deg=(20.0, 140.0, 260.0, 320.0),
     wp_offsets_nm=None,
     name: str = "converging",
@@ -151,6 +154,7 @@ def make_converging(
     """
     Each aircraft converges to its *own* waypoint, with all waypoints clustered
     near the sector center (not exactly at it).
+    FIXED: Reduced radius from 25 NM to 12 NM for better convergence within episode limits.
 
     - bearings_deg: desired inbound headings (toward each aircraft's own waypoint)
     - radius_nm:    initial distance from its waypoint (placed 'behind' each leg)
@@ -196,7 +200,7 @@ def make_converging(
     return save(
         name,
         agents,
-        "Converging: each aircraft targets a distinct waypoint clustered near the center (not at the center)."
+        "FIXED: Converging scenario with 12 NM approach distances (reduced from 25 NM) for better convergence within episode limits."
     )
 
 # ---------- 5) CANONICAL CROSSING (4 aircraft, orthogonal) ----------

@@ -22,14 +22,14 @@ def draw_aircraft(ax, agent, color, show_info=True):
     hdg = agent['hdg_deg']
     agent_id = agent['id']
     
-    # Aircraft triangle size - much larger
-    size = 0.08  # degrees in lat/lon
+    # Aircraft triangle size - optimized for visibility
+    size = 0.06  # degrees in lat/lon (slightly smaller for better alignment)
     
     # Create triangle pointing north (0 degrees)
     triangle_points = np.array([
-        [0, size*1.5],      # nose (pointing north)
-        [-size*0.8, -size*0.7],   # left wing
-        [size*0.8, -size*0.7]     # right wing
+        [0, size*1.8],      # nose (pointing north, longer for better heading indication)
+        [-size*0.9, -size*0.8],   # left wing
+        [size*0.9, -size*0.8]     # right wing
     ])
     
     # Rotate triangle to match heading (clockwise from north)
@@ -42,10 +42,16 @@ def draw_aircraft(ax, agent, color, show_info=True):
     rotated_points[:, 0] += lon
     rotated_points[:, 1] += lat
     
-    # Draw aircraft
+    # Draw aircraft with improved styling
     triangle = patches.Polygon(rotated_points, closed=True, 
-                             facecolor=color, edgecolor='black', linewidth=2, alpha=0.9)
+                             facecolor=color, edgecolor='black', linewidth=2.5, alpha=0.95)
     ax.add_patch(triangle)
+    
+    # Add heading indicator line
+    line_length = size * 2.5
+    end_lon = lon + line_length * np.sin(np.radians(hdg))
+    end_lat = lat + line_length * np.cos(np.radians(hdg))
+    ax.plot([lon, end_lon], [lat, end_lat], color=color, linewidth=3, alpha=0.7)
     
     if show_info:
         # Add aircraft information text box
@@ -77,11 +83,16 @@ def draw_waypoint(ax, waypoint, agent_id, color):
     """Draw waypoint as diamond with information."""
     wp_lat, wp_lon = waypoint['lat'], waypoint['lon']
     
-    # Draw waypoint as diamond - smaller than aircraft
-    diamond = patches.RegularPolygon((wp_lon, wp_lat), 4, radius=0.03,
+    # Draw waypoint as diamond - properly sized for visibility
+    diamond = patches.RegularPolygon((wp_lon, wp_lat), 4, radius=0.035,
                                    orientation=np.pi/4, facecolor=color, 
-                                   edgecolor='black', alpha=0.8, linewidth=1.5)
+                                   edgecolor='black', alpha=0.9, linewidth=2.0)
     ax.add_patch(diamond)
+    
+    # Add waypoint circle for better visibility
+    circle = patches.Circle((wp_lon, wp_lat), radius=0.015, 
+                          facecolor='white', edgecolor='black', alpha=0.8, linewidth=1)
+    ax.add_patch(circle)
     
     # Add waypoint label
     wp_text = f"WP-{agent_id}\nLAT: {wp_lat:.3f}°\nLON: {wp_lon:.3f}°"
@@ -104,13 +115,28 @@ def draw_waypoint(ax, waypoint, agent_id, color):
             va='bottom' if wp_offset_y > 0 else 'top')
 
 def draw_flight_path(ax, agent, color):
-    """Draw dashed line from aircraft to its waypoint."""
+    """Draw dashed line from aircraft to its waypoint with distance annotation."""
     if 'waypoint' in agent:
         start_lat, start_lon = agent['lat'], agent['lon']
         wp_lat, wp_lon = agent['waypoint']['lat'], agent['waypoint']['lon']
         
+        # Draw flight path
         ax.plot([start_lon, wp_lon], [start_lat, wp_lat], 
-                color=color, linestyle='--', alpha=0.7, linewidth=2)
+                color=color, linestyle='--', alpha=0.8, linewidth=2.5)
+        
+        # Calculate and display distance in NM
+        # Simple distance calculation (approximate for small distances)
+        lat_diff_nm = (wp_lat - start_lat) * 60.0  # 1 degree ≈ 60 NM
+        lon_diff_nm = (wp_lon - start_lon) * 60.0 * np.cos(np.radians(start_lat))
+        distance_nm = np.sqrt(lat_diff_nm**2 + lon_diff_nm**2)
+        
+        # Add distance label at midpoint
+        mid_lat = (start_lat + wp_lat) / 2
+        mid_lon = (start_lon + wp_lon) / 2
+        ax.text(mid_lon, mid_lat, f'{distance_nm:.1f} NM', 
+                fontsize=9, fontweight='bold', ha='center', va='center',
+                bbox=dict(boxstyle='round,pad=0.2', facecolor='white', alpha=0.8, edgecolor=color),
+                color=color)
 
 def plot_scenario(scenario_file, output_dir="scenario_plots"):
     """Create visualization for a single scenario."""
@@ -152,30 +178,37 @@ def plot_scenario(scenario_file, output_dir="scenario_plots"):
     ax.set_xlabel('Longitude (degrees)', fontsize=14, fontweight='bold')
     ax.set_ylabel('Latitude (degrees)', fontsize=14, fontweight='bold')
     
-    # Create title
+    # Create enhanced title with fix indicator
     title_name = scenario_name.replace('_', ' ').title()
-    title = f'{title_name} Scenario'
+    is_fixed = "FIXED" in scenario.get("notes", "")
+    fix_indicator = "🔧 FIXED" if is_fixed else "❌ ORIGINAL"
+    title = f'{fix_indicator} {title_name} Scenario'
     notes = scenario.get("notes", "")
-    ax.set_title(f'{title}\n{notes}', fontsize=16, fontweight='bold', pad=20)
+    # Truncate notes if too long
+    display_notes = notes[:100] + "..." if len(notes) > 100 else notes
+    ax.set_title(f'{title}\n{display_notes}', fontsize=15, fontweight='bold', pad=25)
     
     # Add grid
     ax.grid(True, alpha=0.4, linestyle='-', linewidth=0.8)
     ax.set_aspect('equal')
     
-    # Add legend
+    # Add enhanced legend
     from matplotlib.lines import Line2D
     legend_elements = [
         Line2D([0], [0], marker='^', color='w', markerfacecolor='gray', 
-               markersize=12, label='Aircraft', markeredgecolor='black'),
+               markersize=14, label='Aircraft', markeredgecolor='black'),
         Line2D([0], [0], marker='D', color='w', markerfacecolor='gray', 
-               markersize=10, label='Waypoint', markeredgecolor='black'),
-        Line2D([0], [0], color='gray', linestyle='--', linewidth=2, 
-               alpha=0.7, label='Flight Path'),
+               markersize=12, label='Waypoint', markeredgecolor='black'),
+        Line2D([0], [0], color='gray', linestyle='--', linewidth=3, 
+               alpha=0.8, label='Flight Path + Distance'),
+        Line2D([0], [0], color='gray', linewidth=3, 
+               alpha=0.7, label='Heading Vector'),
         Line2D([0], [0], marker='o', color='w', markerfacecolor='black', 
                markersize=10, label='Sector Center')
     ]
-    ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(1, 1),
-              fontsize=11, framealpha=0.9, edgecolor='black')
+    ax.legend(handles=legend_elements, loc='upper right', bbox_to_anchor=(0.98, 0.98),
+              fontsize=10, framealpha=0.95, edgecolor='black', 
+              title='Legend', title_fontsize=11)
     
     # Calculate appropriate axis limits with some padding
     all_lats = [agent['lat'] for agent in scenario['agents']]
@@ -204,14 +237,36 @@ def plot_scenario(scenario_file, output_dir="scenario_plots"):
     ax.set_xlim(min(all_lons) - lon_margin, max(all_lons) + lon_margin)
     ax.set_ylim(min(all_lats) - lat_margin, max(all_lats) + lat_margin)
     
-    # Add scenario metadata box
-    metadata_text = (f"Simulation dt: {scenario.get('sim_dt_s', 'N/A')}s\n"
-                    f"Seed: {scenario.get('seed', 'N/A')}\n"
-                    f"Aircraft count: {len(scenario['agents'])}")
+    # Calculate scenario statistics
+    total_distance = 0
+    max_distance = 0
+    min_distance = float('inf')
+    
+    for agent in scenario['agents']:
+        if 'waypoint' in agent:
+            start_lat, start_lon = agent['lat'], agent['lon']
+            wp_lat, wp_lon = agent['waypoint']['lat'], agent['waypoint']['lon']
+            
+            # Calculate distance in NM
+            lat_diff_nm = (wp_lat - start_lat) * 60.0
+            lon_diff_nm = (wp_lon - start_lon) * 60.0 * np.cos(np.radians(start_lat))
+            distance_nm = np.sqrt(lat_diff_nm**2 + lon_diff_nm**2)
+            
+            total_distance += distance_nm
+            max_distance = max(max_distance, distance_nm)
+            min_distance = min(min_distance, distance_nm)
+    
+    avg_distance = total_distance / len(scenario['agents']) if scenario['agents'] else 0
+    
+    # Add enhanced scenario metadata box
+    metadata_text = (f"Aircraft: {len(scenario['agents'])}\n"
+                    f"Avg Distance: {avg_distance:.1f} NM\n"
+                    f"Range: {min_distance:.1f}-{max_distance:.1f} NM\n"
+                    f"Seed: {scenario.get('seed', 'N/A')}")
     
     ax.text(0.02, 0.98, metadata_text, transform=ax.transAxes,
-            fontsize=10, bbox=dict(boxstyle="round,pad=0.4", 
-                                facecolor='lightblue', alpha=0.9, edgecolor='black'),
+            fontsize=11, bbox=dict(boxstyle="round,pad=0.4", 
+                                facecolor='lightblue', alpha=0.95, edgecolor='black'),
             verticalalignment='top', fontweight='bold')
     
     # Save plot
@@ -221,7 +276,8 @@ def plot_scenario(scenario_file, output_dir="scenario_plots"):
     plt.savefig(output_file, dpi=300, bbox_inches='tight', facecolor='white', edgecolor='none')
     plt.close()
     
-    print(f"Generated plot: {output_file}")
+    fix_status = "FIXED" if "FIXED" in scenario.get("notes", "") else "ORIGINAL"
+    print(f"Generated plot: {output_file} [{fix_status}]")
     return output_file
 
 def visualize_all_scenarios(scenarios_dir="scenarios", output_dir="scenario_plots"):

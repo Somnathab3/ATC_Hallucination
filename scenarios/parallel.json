@@ -1,7 +1,7 @@
 {
   "scenario_name": "parallel",
   "seed": 42,
-  "notes": "Three-aircraft parallel/in-trail northbound on one track with 6 NM initial gaps.",
+  "notes": "FIXED: Three-aircraft parallel/in-trail northbound with 8 NM gaps and 12 NM waypoint distance for better convergence.",
   "center": {
     "lat": 52.0,
     "lon": 4.0,
@@ -12,39 +12,39 @@
     {
       "id": "A1",
       "type": "A320",
-      "lat": 51.6,
-      "lon": 4.0,
-      "hdg_deg": 0.0,
-      "spd_kt": 250.0,
-      "alt_ft": 10000.0,
-      "waypoint": {
-        "lat": 52.4,
-        "lon": 4.0
-      }
-    },
-    {
-      "id": "A2",
-      "type": "A320",
       "lat": 51.7,
       "lon": 4.0,
       "hdg_deg": 0.0,
       "spd_kt": 250.0,
       "alt_ft": 10000.0,
       "waypoint": {
-        "lat": 52.4,
+        "lat": 52.2,
+        "lon": 4.0
+      }
+    },
+    {
+      "id": "A2",
+      "type": "A320",
+      "lat": 51.833333333333336,
+      "lon": 4.0,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 52.2,
         "lon": 4.0
       }
     },
     {
       "id": "A3",
       "type": "A320",
-      "lat": 51.8,
+      "lat": 51.96666666666667,
       "lon": 4.0,
       "hdg_deg": 0.0,
       "spd_kt": 250.0,
       "alt_ft": 10000.0,
       "waypoint": {
-        "lat": 52.4,
+        "lat": 52.2,
         "lon": 4.0
       }
     }

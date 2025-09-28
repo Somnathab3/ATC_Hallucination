@@ -215,8 +215,7 @@ class MARLCollisionEnv(ParallelEnv):
         self.log_trajectories = env_config.get("log_trajectories", True)
         self.episode_tag = env_config.get("episode_tag", None)  # Optional episode tag for CSV naming
         
-        # Observation mode configuration (BEFORE space creation)
-        self.obs_mode          = str(env_config.get("obs_mode", "relative")).lower()  # "relative" | "absolute"
+        # Observation configuration (BEFORE space creation) - relative mode only
         self.neighbor_topk     = int(env_config.get("neighbor_topk", 3))
         
         # Team coordination (PBRS) configuration
@@ -282,34 +281,29 @@ class MARLCollisionEnv(ParallelEnv):
         self.collision_nm = float(env_config.get("collision_nm", 1.0))
         # Note: Collisions trigger unified violation penalties, eliminating double-counting
 
-        # Set observation spaces based on mode
-        if self.obs_mode == "relative":
-            K = self.neighbor_topk
-            self._observation_spaces = {
-                aid: spaces.Dict({
-                    # Goal signals
-                    "wp_dist_norm": spaces.Box(-1.0, 1.0, (1,), np.float32),
-                    "cos_to_wp":    spaces.Box(-1.0, 1.0, (1,), np.float32),
-                    "sin_to_wp":    spaces.Box(-1.0, 1.0, (1,), np.float32),
+        # Set observation spaces - relative mode only with finite bounds for stability
+        K = self.neighbor_topk
+        self._observation_spaces = {
+            aid: spaces.Dict({
+                # Goal signals
+                "wp_dist_norm": spaces.Box(-1.0, 1.0, (1,), np.float32),
+                "cos_to_wp":    spaces.Box(-1.0, 1.0, (1,), np.float32),
+                "sin_to_wp":    spaces.Box(-1.0, 1.0, (1,), np.float32),
 
-                    # Ownship
-                    "airspeed":     spaces.Box(-np.inf, np.inf, (1,), np.float32),
+                # Ownship
+                "airspeed":     spaces.Box(-10.0, 10.0, (1,), np.float32),  # normalized around 150 m/s
 
-                    # Neighbors (top-K): relative position & velocity
-                    "x_r":          spaces.Box(-np.inf, np.inf, (K,), np.float32),
-                    "y_r":          spaces.Box(-np.inf, np.inf, (K,), np.float32),
-                    "vx_r":         spaces.Box(-np.inf, np.inf, (K,), np.float32),
-                    "vy_r":         spaces.Box(-np.inf, np.inf, (K,), np.float32),
-                }) for aid in self.possible_agents
-            }
-        else:
-            # Legacy absolute observation space
-            low  = np.array([-90, -180,   0,   0,     0,   0, 0], dtype=np.float32)
-            high = np.array([ 90,  180, 360, 600, 60000, 200, 1], dtype=np.float32)
-            obs_dim = 7
-            self._observation_spaces = {aid: spaces.Box(
-                low=low, high=high, shape=(obs_dim,), dtype=np.float32
-            ) for aid in self.possible_agents}
+                # Headroom constraints (derivative features) - already tanh normalized
+                "progress_rate": spaces.Box(-1.0, 1.0, (1,), np.float32),  # wp progress rate
+                "safety_rate":   spaces.Box(-1.0, 1.0, (1,), np.float32),  # min_sep change rate
+
+                # Neighbors (top-K): relative position & velocity with finite bounds
+                "x_r":          spaces.Box(-12.0, 12.0, (K,), np.float32),   # relative positions (increased bounds)
+                "y_r":          spaces.Box(-12.0, 12.0, (K,), np.float32),   # relative positions (increased bounds)
+                "vx_r":         spaces.Box(-150.0, 150.0, (K,), np.float32),  # relative velocities
+                "vy_r":         spaces.Box(-150.0, 150.0, (K,), np.float32),  # relative velocities
+            }) for aid in self.possible_agents
+        }
 
         self._action_spaces = {aid: spaces.Box(
             low=-1.0, high=1.0, shape=(2,), dtype=np.float32
@@ -386,17 +380,21 @@ class MARLCollisionEnv(ParallelEnv):
         obs = self._collect_observations()
         if agent in obs:
             return obs[agent]
-        if self.obs_mode == "relative":
-            K = self.neighbor_topk
-            null = np.zeros(1, np.float32); zK = np.zeros(K, np.float32)
-            return {"wp_dist_norm": null, "cos_to_wp": null, "sin_to_wp": null,
-                    "airspeed": null, "x_r": zK, "y_r": zK, "vx_r": zK, "vy_r": zK}
-        # absolute fallback
-        return np.array([0, 0, 0, 100, 10000, 100, 0], dtype=np.float32)
+        # Default fallback observation
+        K = self.neighbor_topk
+        null = np.zeros(1, np.float32); zK = np.zeros(K, np.float32)
+        return {"wp_dist_norm": null, "cos_to_wp": null, "sin_to_wp": null,
+                "airspeed": null, "progress_rate": null, "safety_rate": null,
+                "x_r": zK, "y_r": zK, "vx_r": zK, "vy_r": zK}
     
     def last(self):
         """Return (obs, reward, done, info) for current agent (AEC API compatibility)."""
-        return np.array([0, 0, 0, 100, 10000, 100, 0], dtype=np.float32), 0.0, False, {}
+        K = self.neighbor_topk
+        null = np.zeros(1, np.float32); zK = np.zeros(K, np.float32)
+        obs = {"wp_dist_norm": null, "cos_to_wp": null, "sin_to_wp": null,
+               "airspeed": null, "progress_rate": null, "safety_rate": null,
+               "x_r": zK, "y_r": zK, "vx_r": zK, "vy_r": zK}
+        return obs, 0.0, False, {}
 
     def reset(self, seed=None, options=None):
         if seed is not None:
@@ -987,7 +985,7 @@ class MARLCollisionEnv(ParallelEnv):
         return obs, rewards, terminations, truncations, infos
 
     def _relative_obs_for(self, aid: str) -> dict:
-        """Return dict obs with relative features (no raw lat/lon)."""
+        """Return dict obs with relative features including derivative headroom constraints."""
         idx = bs.traf.id2idx(aid)
         if not isinstance(idx, int) or idx < 0:
             K = self.neighbor_topk
@@ -995,7 +993,8 @@ class MARLCollisionEnv(ParallelEnv):
             zK  = np.zeros(K, np.float32)
             return {
                 "wp_dist_norm": null, "cos_to_wp": null, "sin_to_wp": null,
-                "airspeed": null, "x_r": zK, "y_r": zK, "vx_r": zK, "vy_r": zK
+                "airspeed": null, "progress_rate": null, "safety_rate": null,
+                "x_r": zK, "y_r": zK, "vx_r": zK, "vy_r": zK
             }
 
         # drift wrt waypoint course and waypoint distance
@@ -1007,8 +1006,16 @@ class MARLCollisionEnv(ParallelEnv):
         
         # Calculate distance to waypoint and normalize
         wp_d_nm = haversine_nm(float(bs.traf.lat[idx]), float(bs.traf.lon[idx]), wlat, wlon)
-        # Normalize distance around the 1 NM capture radius -> [-1, 1]
-        wp_dist_norm = np.array([np.clip((wp_d_nm - WAYPOINT_THRESHOLD_NM)/WAYPOINT_THRESHOLD_NM, -1.0, 1.0)], np.float32)
+        # Normalize distance around the 20 NM capture radius -> [-1, 1]
+        wp_dist_norm = np.array([np.tanh(wp_d_nm / 20.0)], np.float32)
+        
+        # Calculate progress rate (signed derivative of waypoint distance)
+        prev_wp_dist = self._prev_wp_dist_nm.get(aid, None)
+        if prev_wp_dist is not None:
+            progress_rate_raw = prev_wp_dist - wp_d_nm  # positive = getting closer
+            progress_rate = np.array([np.tanh(progress_rate_raw / 2.0)], np.float32)  # normalize
+        else:
+            progress_rate = np.zeros(1, np.float32)
         
         try:
             hdg_array = getattr(bs.traf, 'hdg', None)
@@ -1033,7 +1040,29 @@ class MARLCollisionEnv(ParallelEnv):
                 tas_mps = 150.0
         except (IndexError, TypeError, AttributeError):
             tas_mps = 150.0
-        airspeed = np.array([(tas_mps - 150.0) / 6.0], np.float32)
+        airspeed = np.array([np.clip((tas_mps - 150.0) / 6.0, -10.0, 10.0)], np.float32)  # clip to bounds
+
+        # Calculate current minimum separation for safety rate
+        current_min_sep = 200.0  # default if no other aircraft
+        for other_aid in self.agents:
+            if other_aid != aid:
+                other_idx = bs.traf.id2idx(other_aid)
+                if isinstance(other_idx, int) and other_idx >= 0:
+                    try:
+                        other_lat = float(bs.traf.lat[other_idx])
+                        other_lon = float(bs.traf.lon[other_idx])
+                        sep = haversine_nm(float(bs.traf.lat[idx]), float(bs.traf.lon[idx]), other_lat, other_lon)
+                        current_min_sep = min(current_min_sep, sep)
+                    except (IndexError, TypeError):
+                        continue
+        
+        # Calculate safety rate (signed derivative of minimum separation)
+        prev_min_sep = self._prev_minsep_nm.get(aid, float("inf"))
+        if prev_min_sep != float("inf"):
+            safety_rate_raw = current_min_sep - prev_min_sep  # positive = getting safer
+            safety_rate = np.array([np.tanh(safety_rate_raw / 5.0)], np.float32)  # normalize around 5 NM
+        else:
+            safety_rate = np.zeros(1, np.float32)
 
         # build neighbor arrays
         ids = [a for a in self.agents if a != aid]
@@ -1063,8 +1092,9 @@ class MARLCollisionEnv(ParallelEnv):
             # position in NM
             dx_nm = haversine_nm(lat0, lon0, lat0, float(bs.traf.lon[jdx])) * (1 if float(bs.traf.lon[jdx])>=lon0 else -1)
             dy_nm = haversine_nm(lat0, lon0, float(bs.traf.lat[jdx]), lon0) * (1 if float(bs.traf.lat[jdx])>=lat0 else -1)
-            x_r[k] = dx_nm * NM_TO_KM * 1000.0 / 13000.0   # scaling
-            y_r[k] = dy_nm * NM_TO_KM * 1000.0 / 13000.0
+            # Improved scaling and clipping to stay within [-12.0, 12.0] bounds
+            x_r[k] = np.clip(dx_nm * NM_TO_KM * 1000.0 / 20000.0, -12.0, 12.0)  # better scaling with clipping
+            y_r[k] = np.clip(dy_nm * NM_TO_KM * 1000.0 / 20000.0, -12.0, 12.0)  # better scaling with clipping
 
             # velocities (NM/s)
             try:
@@ -1083,14 +1113,16 @@ class MARLCollisionEnv(ParallelEnv):
                 taj_mps = 150.0
             vj = kt_to_nms(taj_mps * 1.94384)
             vxj = vj*math.cos(math.radians(hj)); vyj = vj*math.sin(math.radians(hj))
-            vx_r[k] = (vxj - vx) / 32.0
-            vy_r[k] = (vyj - vy) / 66.0
+            vx_r[k] = np.clip((vxj - vx) / 32.0, -150.0, 150.0)  # clip to velocity bounds
+            vy_r[k] = np.clip((vyj - vy) / 66.0, -150.0, 150.0)  # clip to velocity bounds
 
         return {
             "wp_dist_norm": wp_dist_norm,  # normalized distance to own waypoint
             "cos_to_wp": cos_to_wp,        # cosine of direction to waypoint
             "sin_to_wp": sin_to_wp,        # sine of direction to waypoint
             "airspeed":  airspeed,
+            "progress_rate": progress_rate,  # signed waypoint progress rate (+ = approaching)
+            "safety_rate": safety_rate,     # signed separation rate (+ = getting safer)
             "x_r":       x_r, "y_r": y_r,
             "vx_r":      vx_r, "vy_r": vy_r,
         }
@@ -1149,77 +1181,42 @@ class MARLCollisionEnv(ParallelEnv):
             self._rt_trajectory["waypoint_status"][aid][step_idx] = self._agent_wpreached.get(aid, False)
 
     def _collect_observations(self) -> Dict[str, np.ndarray]:
-        """Build observations based on obs_mode."""
+        """Build relative observations for all agents."""
         obs = {}
         
         try:
             for aid in self.agents:
                 if aid is None:
                     continue
+                    
+                agent_obs = self._relative_obs_for(aid)
                 
-                if self.obs_mode == "relative":
-                    obs[aid] = self._relative_obs_for(aid)
-                else:
-                    # Legacy absolute observation mode
-                    idx = bs.traf.id2idx(aid)
-                    if isinstance(idx, int) and idx >= 0:
-                        try:
-                            lat = float(getattr(bs.traf, 'lat', [0])[idx] if hasattr(bs.traf, 'lat') else 0)
-                            lon = float(getattr(bs.traf, 'lon', [0])[idx] if hasattr(bs.traf, 'lon') else 0)
-                            hdg = float(getattr(bs.traf, 'hdg', [0])[idx] if hasattr(bs.traf, 'hdg') else 0)
-                            tas_ms = float(getattr(bs.traf, 'tas', [50])[idx] if hasattr(bs.traf, 'tas') else 50)
-                            alt_m = float(getattr(bs.traf, 'alt', [3000])[idx] if hasattr(bs.traf, 'alt') else 3000)
-                            
-                            tas_kt = tas_ms * 1.94384  # m/s to knots
-                            alt_ft = alt_m * 3.28084   # m to feet
-                            
-                            # Simple separation to nearest other aircraft
-                            min_sep = 200.0  # default if no other aircraft
-                            for other_aid in self.agents:
-                                if other_aid != aid:
-                                    other_idx = bs.traf.id2idx(other_aid)
-                                    if isinstance(other_idx, int) and other_idx >= 0:
-                                        other_lat = float(getattr(bs.traf, 'lat', [0])[other_idx] if hasattr(bs.traf, 'lat') else 0)
-                                        other_lon = float(getattr(bs.traf, 'lon', [0])[other_idx] if hasattr(bs.traf, 'lon') else 0)
-                                        # Simple Euclidean distance in NM (approximation)
-                                        d_lat = (lat - other_lat) * 60.0
-                                        d_lon = (lon - other_lon) * 60.0 * max(1e-6, math.cos(math.radians(lat)))
-                                        sep = math.sqrt(d_lat*d_lat + d_lon*d_lon)
-                                        min_sep = min(min_sep, sep)
-                            
-                            # Build observation vector
-                            vec = np.array([
-                                lat, lon, hdg, tas_kt, alt_ft, min_sep,
-                                min(self._step_idx / self.max_episode_steps, 1.0)
-                            ], dtype=np.float32)
-                            
-                            # Clip to declared Box bounds (only for Box spaces)
-                            space = self._observation_spaces[aid]
-                            if isinstance(space, spaces.Box):
-                                vec = np.clip(vec, space.low, space.high).astype(np.float32)
-                            obs[aid] = vec
-                            
-                        except Exception as e:
-                            # Fallback if BlueSky data access fails
-                            obs[aid] = np.array([0, 0, 0, 100, 10000, 100, 0], dtype=np.float32)
-                    else:
-                        # Aircraft not found in BlueSky
-                        obs[aid] = np.array([0, 0, 0, 100, 10000, 100, 0], dtype=np.float32)
+                # Safety validation: ensure all values are within defined bounds
+                agent_obs["wp_dist_norm"] = np.clip(agent_obs["wp_dist_norm"], -1.0, 1.0)
+                agent_obs["cos_to_wp"] = np.clip(agent_obs["cos_to_wp"], -1.0, 1.0) 
+                agent_obs["sin_to_wp"] = np.clip(agent_obs["sin_to_wp"], -1.0, 1.0)
+                agent_obs["airspeed"] = np.clip(agent_obs["airspeed"], -10.0, 10.0)
+                agent_obs["progress_rate"] = np.clip(agent_obs["progress_rate"], -1.0, 1.0)
+                agent_obs["safety_rate"] = np.clip(agent_obs["safety_rate"], -1.0, 1.0)
+                agent_obs["x_r"] = np.clip(agent_obs["x_r"], -12.0, 12.0)
+                agent_obs["y_r"] = np.clip(agent_obs["y_r"], -12.0, 12.0)
+                agent_obs["vx_r"] = np.clip(agent_obs["vx_r"], -150.0, 150.0)
+                agent_obs["vy_r"] = np.clip(agent_obs["vy_r"], -150.0, 150.0)
+                
+                obs[aid] = agent_obs
                 
         except Exception as e:
             self._logger.error(f"Error in observation collection: {e}")
             for aid in self.agents:
                 if aid is not None:
-                    if self.obs_mode == "relative":
-                        K = self.neighbor_topk
-                        null = np.zeros(1, np.float32)
-                        zK  = np.zeros(K, np.float32)
-                        obs[aid] = {
-                            "wp_dist_norm": null, "cos_to_wp": null, "sin_to_wp": null,
-                            "airspeed": null, "x_r": zK, "y_r": zK, "vx_r": zK, "vy_r": zK
-                        }
-                    else:
-                        obs[aid] = np.array([0, 0, 0, 100, 10000, 100, 0], dtype=np.float32)
+                    K = self.neighbor_topk
+                    null = np.zeros(1, np.float32)
+                    zK  = np.zeros(K, np.float32)
+                    obs[aid] = {
+                        "wp_dist_norm": null, "cos_to_wp": null, "sin_to_wp": null,
+                        "airspeed": null, "progress_rate": null, "safety_rate": null,
+                        "x_r": zK, "y_r": zK, "vx_r": zK, "vy_r": zK
+                    }
                 
         return obs
 

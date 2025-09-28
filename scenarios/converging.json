@@ -1,7 +1,7 @@
 {
   "scenario_name": "converging",
   "seed": 42,
-  "notes": "Converging: each aircraft targets a distinct waypoint clustered near the center (not at the center).",
+  "notes": "FIXED: Converging scenario with 12 NM approach distances (reduced from 25 NM) for better convergence within episode limits.",
   "center": {
     "lat": 52.0,
     "lon": 4.0,
@@ -12,9 +12,9 @@
     {
       "id": "A1",
       "type": "A320",
-      "lat": 51.65179474133921,
-      "lon": 3.827860183255076,
-      "hdg_deg": 20.16072082506099,
+      "lat": 51.855394809176154,
+      "lon": 3.948342288242974,
+      "hdg_deg": 20.077294807668068,
       "spd_kt": 250.0,
       "alt_ft": 10000.0,
       "waypoint": {
@@ -25,9 +25,9 @@
     {
       "id": "A2",
       "type": "A320",
-      "lat": 52.27918518463291,
-      "lon": 3.633041095984212,
-      "hdg_deg": 140.20190785271427,
+      "lat": 52.113208888623795,
+      "lon": 3.8590522263912144,
+      "hdg_deg": 140.0966580934106,
       "spd_kt": 250.0,
       "alt_ft": 10000.0,
       "waypoint": {
@@ -38,9 +38,9 @@
     {
       "id": "A3",
       "type": "A320",
-      "lat": 52.110686740694554,
-      "lon": 4.5966834440343645,
-      "hdg_deg": 259.9841084512607,
+      "lat": 52.07306296886672,
+      "lon": 4.249807852804951,
+      "hdg_deg": 259.992380242021,
       "spd_kt": 250.0,
       "alt_ft": 10000.0,
       "waypoint": {
@@ -51,9 +51,9 @@
     {
       "id": "A4",
       "type": "A320",
-      "lat": 51.63914814870043,
-      "lon": 4.372356976490664,
-      "hdg_deg": 319.80016156964575,
+      "lat": 51.80512444470954,
+      "lon": 4.146354248422229,
+      "hdg_deg": 319.90382170678566,
       "spd_kt": 250.0,
       "alt_ft": 10000.0,
       "waypoint": {

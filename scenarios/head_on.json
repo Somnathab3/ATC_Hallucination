@@ -1,7 +1,7 @@
 {
   "scenario_name": "head_on",
   "seed": 42,
-  "notes": "Two-aircraft head-on encounter along a straight line through center.",
+  "notes": "Two-aircraft head-on encounter with reciprocal headings through center point. Inevitable conflict without evasive action.",
   "center": {
     "lat": 52.0,
     "lon": 4.0,

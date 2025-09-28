@@ -802,7 +802,6 @@ def run_targeted_shift_grid(repo_root: str,
         "enable_hallucination_detection": True,  # Enable real-time hallucination detection
 
         # MATCH TRAINING CONFIG: Enable relative observations (no raw lat/lon)
-        "obs_mode": "relative",
         "neighbor_topk": 3,
         
         # MATCH TRAINING CONFIG: Collision detection settings

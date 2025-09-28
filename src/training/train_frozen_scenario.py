@@ -191,7 +191,6 @@ def train_frozen(repo_root: str,
         "results_dir": os.path.abspath(results_dir),  # Pass absolute path of timestamped results directory
 
         # Observation configuration
-        "obs_mode": "relative",
         "neighbor_topk": 3,
         
         # Collision and conflict settings
@@ -253,12 +252,12 @@ def train_frozen(repo_root: str,
                   .framework("torch")  # Disable torch compilation to avoid GPU indexing issues
                   .api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
                   .env_runners(
-                      num_env_runners=1,
+                      num_env_runners=4 if use_gpu else 1,  # Increased for faster execution
                       num_envs_per_env_runner=1,
                       rollout_fragment_length=200,
                       sample_timeout_s=300.0,
                       max_requests_in_flight_per_env_runner=1,
-                      num_cpus_per_env_runner=1,
+                      num_cpus_per_env_runner=2,  # Increased for more parallelism
                       num_gpus_per_env_runner=0,
                       batch_mode="truncate_episodes",
                   )
@@ -291,8 +290,10 @@ def train_frozen(repo_root: str,
                   )
                   .resources(
                       num_gpus=1 if use_gpu else 0,
-                      num_learner_workers=0,
-                      num_cpus_per_learner_worker=1,
+                  )
+                  .learners(
+                      num_learners=0,
+                      num_cpus_per_learner=1,
                   )
                   )
                 # Add PPO-specific hyperparameters
@@ -321,12 +322,12 @@ def train_frozen(repo_root: str,
                 grad_clip=5.0,
             )
             .env_runners(
-                num_env_runners=1 if use_gpu else 1,
+                num_env_runners=4 if use_gpu else 1,  # Increased for faster execution
                 num_envs_per_env_runner=1,
-                rollout_fragment_length='auto',
+                rollout_fragment_length=200,  # Fixed: Changed from 'auto' to integer
                 batch_mode="truncate_episodes",
                 create_env_on_local_worker=True,
-                num_cpus_per_env_runner=1,
+                num_cpus_per_env_runner=2,  # Increased for more parallelism
                 num_gpus_per_env_runner=0,
             )
             .evaluation(
@@ -374,7 +375,7 @@ def train_frozen(repo_root: str,
             .env_runners(
                 num_env_runners=2 if use_gpu else 1,
                 num_envs_per_env_runner=1,
-                rollout_fragment_length='auto',
+                rollout_fragment_length=50,  # Fixed: Changed from 'auto' to integer
                 batch_mode="truncate_episodes",
                 create_env_on_local_worker=True,
                 num_cpus_per_env_runner=1,
@@ -404,7 +405,9 @@ def train_frozen(repo_root: str,
             )
             .resources(
                 num_gpus=1 if use_gpu else 0,
-                num_learner_workers=1 if use_gpu else 1,
+            )
+            .learners(
+                num_learners=1 if use_gpu else 1,
             )
         )
         
@@ -427,7 +430,7 @@ def train_frozen(repo_root: str,
             .env_runners(
                 num_env_runners=1 if use_gpu else 0,
                 num_envs_per_env_runner=1 if use_gpu else 1,
-                rollout_fragment_length='auto',
+                rollout_fragment_length=200,  # Fixed: Changed from 'auto' to integer
                 batch_mode="truncate_episodes",
                 create_env_on_local_worker=True,
                 num_cpus_per_env_runner=1,
@@ -454,7 +457,9 @@ def train_frozen(repo_root: str,
                          policies_to_train=["shared_policy"])
             .resources(
                 num_gpus=1 if use_gpu else 0,
-                num_learner_workers=1 if use_gpu else 1,
+            )
+            .learners(
+                num_learners=1 if use_gpu else 1,
             )
         )
         

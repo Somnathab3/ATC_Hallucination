@@ -130,7 +130,6 @@ def build_env(scenario_json: str, results_dir: str, seed: int = 123):
         "log_trajectories": True,
         "seed": seed,
         # IMPORTANT: keep the SAME obs/reward settings as training to avoid space mismatches.
-        "obs_mode": "relative",
         "neighbor_topk": 3,
         "collision_nm": 3.0,
     }
