@@ -1,287 +1,276 @@
-# ATC Hallucination Detection
+# ATC Hallucination Project
 
-A Multi-Agent Reinforcement Learning framework for Air Traffic Control conflict detection and resolution with comprehensive hallucination detection capabilities.
+A comprehensive Multi-Agent Reinforcement Learning framework for air traffic collision avoidance with systematic robustness testing and hallucination detection capabilities.
 
-## 🎯 Overview
+## Overview
 
-This project implements a sophisticated MARL system for air traffic control that can:
-- Train multi-agent collision avoidance policies using PPO/SAC
-- Detect and analyze hallucination patterns in trained models
-- Perform comprehensive distribution shift testing
-- Evaluate model robustness through targeted perturbations
+This project provides end-to-end capabilities for training, testing, and analyzing MARL collision avoidance policies. Key components include multi-algorithm training (PPO/SAC/IMPALA/CQL/APPO), targeted distribution shift testing, real-time hallucination detection, and comprehensive analysis/visualization packages.
 
-### Key Features
+**Core Features:**
+- **Training**: Multi-algorithm MARL training with shared policies and unified reward systems
+- **Testing**: Targeted shifts and baseline-vs-shift matrix evaluation for robustness assessment  
+- **Analysis**: Real-time and offline hallucination detection with TCPA/DCPA ground truth
+- **Scenarios**: Five standardized air traffic conflict scenarios with "FIXED" distances for convergence
+- **CLI**: Unified command-line interface for all operations with copy-pasteable examples
 
-- **Multi-Agent Training**: PPO algorithms for collaborative conflict resolution
-- **Hallucination Detection**: Advanced metrics for identifying false positives/negatives
-- **Distribution Shift Testing**: Systematic evaluation of model robustness
-- **Targeted Perturbations**: Single-agent modifications to test edge cases
-- **Comprehensive Analysis**: Detailed performance metrics and visualizations
+## Quick Start (CLI-first)
 
-## 🏗️ Architecture
-
-```
-src/
-├── environment/          # MARL collision avoidance environment
-│   └── marl_collision_env_minimal.py
-├── training/             # Training scripts and utilities
-│   └── train_frozen_scenario.py
-├── analysis/             # Hallucination detection and analysis
-│   └── hallucination_detector_enhanced.py
-├── testing/              # Distribution shift testing
-│   ├── shift_tester.py
-│   └── targeted_shift_tester.py
-└── scenarios/            # Test scenarios and configuration
-    └── scenario_generator.py
-
-scenarios/                # JSON scenario definitions
-├── parallel.json         # 3-agent parallel formation
-├── head_on.json          # 2-agent head-on encounter
-├── converging.json       # 4-agent converging scenario
-└── ...
-
-tests/                    # Test scripts and validation
-├── train.py              # Main training script
-├── test_shifts.py        # Distribution shift testing
-├── test_targeted_shifts.py # Targeted shift analysis
-└── visualize_air_traffic.py # Real-time visualization
-```
-
-## 🚀 Quick Start
-
-### Prerequisites
-
-**Important**: This project requires PyTorch with CUDA support for GPU acceleration. Install the appropriate version for your CUDA toolkit:
-
+Install dependencies:
 ```bash
-# For CUDA 12.1 (recommended)
+# Install PyTorch with CUDA support + RLlib + BlueSky
 pip install torch>=2.0.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-
-# For CUDA 11.8
-pip install torch>=2.0.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu118
-
-# CPU-only (not recommended for training)
-pip install torch>=2.0.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+pip install ray[rllib] bluesky-simulator>=1.3.0 pandas numpy matplotlib pettingzoo gymnasium
 ```
 
-Then install remaining dependencies:
+Generate scenarios → Train → Test → Analyze → Visualize:
 
 ```bash
-pip install ray[rllib] bluesky-simulator>=1.3.0 pandas numpy matplotlib pygame pettingzoo gymnasium
-```
-
-Or install all requirements at once:
-
-```bash
-pip install -r requirements.txt
-```
-
-### Training a Model
-
-```bash
-# Train PPO on parallel scenario (recommended)
-python atc_cli.py train --scenario parallel --algo PPO --timesteps 100000 --gpu
-
-# Train with specific configuration
-python src/training/train_frozen_scenario.py --scenario parallel --episodes 1000
-```
-
-### Testing for Hallucinations
-
-```bash
-# Run comprehensive shift testing
-python test_shifts.py
-
-# Run targeted single-agent shifts
-python src/testing/targeted_shift_tester.py --scenario parallel --episodes 10
-
-# Test specific configurations
-python src/testing/targeted_shift_tester.py \
-  --checkpoint models/your_model \
-  --scenario head_on \
-  --episodes 5 \
-  --algorithm SAC
-```
-
-### Visualization
-
-```bash
-# Visualize trained model in action
-python visualize_air_traffic.py --checkpoint models/your_model --scenario parallel
-```
-
-## 📊 Testing Framework
-
-### Distribution Shift Testing
-
-The framework supports two types of distribution shift testing:
-
-#### 1. Unison Shifts
-All agents are modified equally:
-- Speed variations: ±5 to ±30 kt
-- Position shifts: 0.1 to 1.0 NM
-- Heading changes: ±3 to ±15°
-- Action delays: 0 to 5 steps
-
-#### 2. Targeted Shifts
-Only one agent is modified per test:
-- **Micro perturbations**: Small variations within training envelope
-- **Macro deviations**: Large changes to test failure modes
-- **Conflict-inducing**: Position shifts moving agents closer
-- **96 test configurations** covering all agents and parameters
-
-### Key Metrics
-
-- **Safety**: Loss of Separation (LoS) events, minimum separation
-- **Detection**: True/False positives/negatives for conflict prediction
-- **Resolution**: Success rate of conflict resolution maneuvers
-- **Efficiency**: Path efficiency, waypoint completion rates
-- **Stability**: Action oscillation and control smoothness
-
-## 🔧 Command Line Interface
-
-The project now includes a unified CLI (`atc_cli.py`) for all operations:
-
-### Basic Usage
-
-```bash
-# Generate scenarios
+# Generate all scenarios
 python atc_cli.py generate-scenarios --all
 
-# Train a model
-python atc_cli.py train --scenario head_on --algo PPO --timesteps 100000 --gpu
+# Train PPO on canonical crossing (50k timesteps)
+python atc_cli.py train --scenario canonical_crossing --algo PPO --timesteps 50000 --gpu
 
-# Run shift testing
+# Test robustness with targeted shifts (visualizations included)
 python atc_cli.py test-shifts --targeted --episodes 5 --viz
 
-# Analyze results
+# Analyze results from latest run
 python atc_cli.py analyze
 
-# Run full pipeline
-python atc_cli.py full-pipeline --scenario parallel --train-timesteps 50000 --test-episodes 3
+# Full pipeline: scenario generation → training → testing → analysis
+python atc_cli.py full-pipeline --scenario head_on --train-timesteps 50000 --test-episodes 3
+
+# List available resources
+python atc_cli.py list scenarios
+python atc_cli.py list checkpoints
 ```
 
-### Available Commands
+## Training (algorithms & hyperparameters)
 
-- `generate-scenarios`: Create air traffic scenarios
-- `train`: Train reinforcement learning models
-- `test-shifts`: Run distribution shift testing
-- `analyze`: Analyze training/testing results
-- `visualize`: Generate trajectory plots
-- `full-pipeline`: Execute complete workflow
-- `list`: List available scenarios/checkpoints/results
+**Supported algorithms:** PPO, SAC, IMPALA, CQL, APPO
 
-See [CLI_README.md](CLI_README.md) for comprehensive documentation.
+### PPO Configuration
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| **Model** | [256, 256] tanh | Hidden layer sizes and activation |
+| **Learning** | lr=5e-4 (GPU) / 3e-4 (CPU) | Learning rate |
+| **Training** | gamma=0.995, epochs=10/8 | Discount factor, SGD epochs |
+| **Batch Size** | 8192 (GPU) / 4096 (CPU) | Training batch size |
+| **Rollout** | length=200, num_workers=4 | Fragment length, parallel workers |
+| **Clipping** | grad_clip=1.0, clip_param=0.1 | Gradient and policy clipping |
+| **Regularization** | entropy_coeff=0.01, kl_coeff=0.2 | Exploration and stability |
+| **Resources** | num_gpus=1 (if available) | GPU allocation per algorithm |
+| **Evaluation** | interval=5, duration=5 episodes | Progress tracking frequency |
 
-## 📈 Results Analysis
+### SAC Configuration
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| **Model** | [256, 256] tanh | Hidden layer sizes and activation |
+| **Learning** | lr=5e-4, critic_lr=5e-4, alpha_lr=5e-4 | Actor/critic learning rates |
+| **Training** | gamma=0.995, tau=0.01, training_intensity=1.5 | Q-function updates |
+| **Batch Size** | 8192 (GPU) / 4096 (CPU) | Training batch size |
+| **Replay Buffer** | 1M (GPU) / 500k (CPU) timesteps | Experience replay capacity |
+| **Exploration** | initial_alpha=0.1, target_entropy=auto | Temperature parameter |
+| **Warmup** | 2k (GPU) / 5k (CPU) steps before learning | Pre-training sampling |
 
-Test results are organized in timestamped directories:
+### IMPALA Configuration
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| **Model** | [256, 256] tanh | Hidden layer sizes and activation |
+| **Learning** | lr=6e-4, minibatch_size=512 | Learning rate and batch processing |
+| **V-trace** | clip_rho=1.0, clip_pg_rho=1.0 | Off-policy correction |
+| **Regularization** | entropy_coeff=0.01, vf_loss_coeff=0.5 | Value function weighting |
 
+**Multi-agent setup:** All algorithms use shared_policy with parameter sharing across agents. Observation/action spaces discovered via temporary environment instantiation. Policy mapping function routes all agents to "shared_policy".
+
+**Training outputs:** Timestamped `training/results_ALGO_SCENARIO_TIMESTAMP/` directory containing:
+- `training_progress.csv` with timestep, reward_mean, zero_conflict_streak columns
+- Checkpoints saved on reward improvements in `checkpoints/best_*` subdirectory  
+- Final model copied to `models/ALGO_SCENARIO_TIMESTAMP/` with training metadata
+
+## Environment & Observations
+
+**Observation space:** Relative observations only (no raw lat/lon) for generalization
+
+| Key | Shape | Range | Description |
+|-----|-------|-------|-------------|
+| `wp_dist_norm` | (1,) | [-1, 1] | Normalized distance to waypoint (tanh) |
+| `cos_to_wp` | (1,) | [-1, 1] | Cosine of direction to waypoint |
+| `sin_to_wp` | (1,) | [-1, 1] | Sine of direction to waypoint |
+| `airspeed` | (1,) | [-10, 10] | Normalized airspeed around 150 m/s |
+| `progress_rate` | (1,) | [-1, 1] | Waypoint progress rate (+ approaching) |
+| `safety_rate` | (1,) | [-1, 1] | Minimum separation rate (+ getting safer) |
+| `x_r` | (3,) | [-12, 12] | Relative positions of top-3 neighbors |
+| `y_r` | (3,) | [-12, 12] | Relative positions of top-3 neighbors |
+| `vx_r` | (3,) | [-150, 150] | Relative velocities of neighbors |
+| `vy_r` | (3,) | [-150, 150] | Relative velocities of neighbors |
+
+**Action scaling:** Normalized [-1, 1] → ±18° heading, ±10 kt speed per 10-second step
+
+**Episode termination:** Max 100 steps (1000 seconds) or all agents reach waypoints within 1 NM
+
+**Reward system:** Unified components eliminate double-counting:
+- **Signed progress:** +/- for movement toward/away from waypoint (0.04/km)
+- **Well-clear violations:** Entry penalty (-25) + severity-scaled step penalties (-1.0×depth)
+- **Drift improvement:** Rewards heading optimization toward waypoint (0.01/degree)
+- **Team PBRS:** Enhanced coordination with 5 NM sensitivity (weight=0.6)
+- **Action costs:** Penalty for non-neutral control inputs (-0.01/unit)
+- **Time penalty:** Efficiency incentive (-0.0005/second)
+
+**Trajectory CSV columns:** 
+`episode_id, step_idx, sim_time_s, agent_id, lat_deg, lon_deg, alt_ft, hdg_deg, tas_kt, action_hdg_delta_deg, action_spd_delta_kt, reward, min_separation_nm, conflict_flag, waypoint_reached, gt_conflict, predicted_alert, tp, fp, fn, tn`
+
+## Scenarios
+
+Five standardized scenarios with "FIXED" distances for convergence within episode limits:
+
+| Scenario | Agents | Description | Key Parameters |
+|----------|--------|-------------|----------------|
+| `head_on` | 2 | Direct approach on reciprocal headings | approach_nm=18.0 |
+| `t_formation` | 3 | Horizontal bar + vertical stem crossing | arm_nm=7.5, stem_nm=10.0 |
+| `parallel` | 3 | In-trail same-direction with 8 NM gaps | gaps_nm=8.0, south_nm=18.0 |
+| `converging` | 4 | Multiple aircraft to clustered waypoints | radius_nm=12.0 (reduced from 25) |
+| `canonical_crossing` | 4 | Orthogonal 4-way intersection | radius_nm=12.5 |
+
+**Scenario generation:** Python helpers in `src.scenarios.scenario_generator`:
+```bash
+# Generate all scenarios with FIXED distances
+python -c "from src.scenarios.scenario_generator import *; [make_head_on(), make_t_formation(), make_parallel(), make_converging(), make_canonical_crossing()]"
+
+# Quick visualization
+python src/scenarios/visualize_scenarios.py  # → scenario_plots/*.png
 ```
-results/targeted_shift_analysis_parallel_YYYYMMDD_HHMMSS/
-├── shifts/                     # Individual test episodes
-│   ├── speed_micro_A1_+5kt/   # Episode data and trajectories
-│   ├── pos_closer_macro_A2_north_0.30deg/
-│   └── ...
-├── analysis/                   # Aggregated analysis
-│   ├── A1_analysis.csv        # Agent-specific statistics
-│   ├── conflict_inducing_shifts.csv # Most problematic configs
-│   ├── type_range_analysis.csv # Micro vs macro comparison
-│   └── targeted_shift_summary.json
-├── targeted_shift_test_summary.csv # Main results
-└── README.md                   # Detailed results summary
+
+All scenarios centered at 52.0°N, 4.0°E (Netherlands airspace) at FL100 with 250kt cruise speed.
+
+## Testing & Robustness
+
+### Targeted Shifts
+
+Individual agent modifications to test single points of failure. Algorithm restoration via `Algorithm.from_checkpoint` with `shared_policy`. Environment config matches training exactly to avoid observation space mismatches.
+
+**Shift generation:** Speed/position/heading/type/waypoint modifications:
+- **Micro range:** ±5-15 units (small perturbations within training envelope)
+- **Macro range:** ±20-40 units (large deviations to test failure modes)
+- **Position shifts:** Move agents closer to increase conflict probability
+- **Targeted per-agent:** Only one agent modified per test case
+
+**Per-shift folder structure:**
+```
+shifts/speed_micro_A2_+10kt/
+├── trajectory_speed_micro_A2_+10kt_ep0.json    # Agent positions/actions over time
+├── traj_speed_micro_A2_+10kt_ep0.csv          # Rich CSV with hallucination data
+├── summary_speed_micro_A2_+10kt_ep0.csv       # Episode-level metrics
+└── README.md                                   # Test configuration details
 ```
 
-### Key Analysis Files
-
-- **`conflict_inducing_shifts.csv`**: Configurations causing most conflicts
-- **`A1_analysis.csv`, `A2_analysis.csv`, `A3_analysis.csv`**: Agent-specific vulnerabilities
-- **`type_range_analysis.csv`**: Performance by shift type and magnitude
-- **`targeted_shift_summary.json`**: Overall statistics and findings
-
-## 🧪 Scenarios
-
-The framework includes several pre-defined scenarios:
-
-| Scenario | Agents | Description |
-|----------|--------|-------------|
-| `parallel` | 3 | Parallel formation (baseline) |
-| `head_on` | 2 | Direct head-on encounter |
-| `converging` | 4 | Four aircraft converging |
-| `canonical_crossing` | 4 | Standard crossing pattern |
-| `t_formation` | 3 | T-shaped configuration |
-
-### Custom Scenarios
-
-Create new scenarios by adding JSON files to the `scenarios/` directory:
-
-```json
-{
-  "scenario_name": "custom_test",
-  "seed": 42,
-  "center": {"lat": 52.0, "lon": 4.0, "alt_ft": 10000.0},
-  "agents": [
-    {
-      "id": "A1",
-      "type": "A320",
-      "lat": 51.6, "lon": 4.0,
-      "hdg_deg": 0.0, "spd_kt": 250.0,
-      "alt_ft": 10000.0,
-      "waypoint": {"lat": 52.4, "lon": 4.0}
-    }
-  ]
-}
+**Key CLI command:**
+```bash
+python atc_cli.py test-shifts --targeted --episodes 5 --viz --scenario parallel
 ```
 
-## 🔬 Research Applications
+**Run metadata:** `targeted_run_metadata.json` with shift ranges, total configurations, episodes per shift.
 
-This framework is designed to support research in:
+**Wind configuration:** Environmental shifts include layered wind fields and uniform winds scaled by shift characteristics.
 
-- **MARL Safety**: Evaluating collision avoidance in safety-critical systems
-- **Hallucination Detection**: Identifying false predictions in learned policies
-- **Robustness Testing**: Systematic evaluation of model performance under perturbations
-- **Distribution Shift**: Understanding model behavior outside training data
-- **Air Traffic Control**: Practical applications in aviation safety systems
+### Baseline vs Shifted Scenarios
 
-## 📚 Key Publications and References
+Loads baseline scenario (from checkpoint filename pattern), runs all other scenarios, computes performance deltas. Metrics extracted from CSV via hallucination detector. Outputs summary tables + interactive dashboards/maps.
 
-The testing methodology follows best practices from recent MARL and safety literature:
+**Key outputs:**
+- `baseline_vs_shift_summary.csv`: Statistical comparison across all scenarios
+- `summary_f1_score.png`, `summary_path_efficiency.png`: Performance visualizations  
+- Interactive trajectory maps and comparison plots in `<model>__visualizations/` directories
 
-- Distribution shift testing for safety-critical systems
-- Hallucination detection in reinforcement learning
-- Multi-agent conflict resolution evaluation metrics
-- Robustness testing for deep RL policies
+## Analysis & Visualization
 
-## 🤝 Contributing
+### Hallucination Detector
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit your changes (`git commit -m 'Add amazing feature'`)
-4. Push to the branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+**Method:** TCPA/DCPA ground truth vs. policy action patterns with IoU-based window matching for robust event-level evaluation.
 
-### Development Guidelines
+**Core metrics:**
+- **Confusion matrix:** TP/FP/FN/TN (step-level) → precision/recall/F1 (event-level post-IoU)
+- **Alert burden:** duty_cycle, alerts_per_min, total_alert_time_s (operator workload)
+- **Lead time:** avg_lead_time_s (negative=early alerts, positive=late alerts)
+- **Resolution:** TP_res/FP_res/FN_res within 60s after alert (intervention success)
+- **Efficiency:** path_efficiency, flight_time_s, waypoint_completion_rate
+- **Stability:** action_oscillation_rate (behavioral smoothness)
 
-- Follow PEP 8 style guidelines
-- Add comprehensive docstrings to all functions
-- Include unit tests for new functionality
-- Update documentation for new features
+**Real-time usage:** Embedded in environment during training/testing via `enable_hallucination_detection=True`
 
-## 📄 License
+**Offline usage:** CSV trajectory analysis via `HallucinationDetector().compute()` with trajectory dict input
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+### Visualization Capabilities
 
-## 🙏 Acknowledgments
+Comprehensive analysis package in `src/analysis/` - see [analysis/README.md](src/analysis/README.md) for full capabilities.
 
-- BlueSky simulator for air traffic simulation
-- Ray RLLib for reinforcement learning framework
-- PettingZoo for multi-agent environment standardization
-- Research community for MARL safety methodologies
+**Figure types supported:**
+- **Geographic maps:** Interactive Folium with trajectory overlays, safety circles, conflict heatmaps
+- **Temporal plots:** Plotly time series, animated trajectories, degradation curves
+- **Publication figures:** Matplotlib with bootstrap confidence intervals, vulnerability matrices
+- **Comparison dashboards:** Baseline vs shifted trajectory analysis
 
-## 📞 Contact
+**Make all figures:**
+```bash
+python src/analysis/make_all_figures.py --results-dir results/
+```
 
-For questions, issues, or collaborations, please open an issue on GitHub or contact the maintainers.
+**Dependencies:** folium>=0.14.0, plotly>=5.15.0, matplotlib>=3.6.0, scikit-learn>=1.2.0
 
----
+## CLI Reference
 
-**Note**: This project is focused on research applications. For production air traffic control systems, additional safety certifications and validations would be required.
+Complete command-line interface with copy-pasteable examples:
+
+**generate-scenarios:** Create air traffic scenarios
+```bash
+python atc_cli.py generate-scenarios --all
+python atc_cli.py generate-scenarios --scenario head_on --params "approach_nm=20"
+```
+
+**train:** Train MARL models with algorithm-specific hyperparameters  
+```bash
+python atc_cli.py train --scenario canonical_crossing --algo PPO --timesteps 100000 --gpu
+python atc_cli.py train --scenario all --timesteps 50000 --checkpoint-every 10000
+```
+
+**test-shifts:** Run targeted or unison distribution shift testing
+```bash
+python atc_cli.py test-shifts --targeted --episodes 5 --viz --scenario parallel
+python atc_cli.py test-shifts --checkpoint latest --algo SAC
+```
+
+**analyze:** Process training/testing results with hallucination detection
+```bash
+python atc_cli.py analyze --results-dir results_PPO_head_on_20250923_190203
+python atc_cli.py analyze --no-hallucination
+```
+
+**visualize:** Generate trajectory plots and analysis figures  
+```bash
+python atc_cli.py visualize --trajectory traj_ep_0001.csv
+python atc_cli.py visualize --results-dir results_PPO_parallel_latest
+```
+
+**full-pipeline:** Complete workflow from scenario generation to analysis
+```bash
+python atc_cli.py full-pipeline --scenario head_on --train-timesteps 50000 --test-episodes 3
+```
+
+**list:** Browse available resources
+```bash
+python atc_cli.py list scenarios
+python atc_cli.py list checkpoints  
+python atc_cli.py list results
+```
+
+## Troubleshooting
+
+**Ray worker issues on Windows:** Set `num_rollout_workers=0` for driver-only sampling if Ray fails to spawn workers.
+
+**Environment config alignment:** Ensure test environment configuration matches training settings (neighbor_topk, collision_nm, team coordination weights) to avoid observation space mismatches.
+
+**GPU auto-detection:** Algorithm configurations automatically detect CUDA availability. Use `--gpu`/`--no-gpu` flags to override.
+
+**Checkpoint restoration:** Use `Algorithm.from_checkpoint()` with `shared_policy` ID. CLI automatically handles proper multi-agent policy mapping restoration.
+
+**BlueSky initialization:** Only one BlueSky instance per process. Environment handles global initialization and cleanup automatically.
