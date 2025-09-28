@@ -6,6 +6,7 @@ A comprehensive command-line interface for the ATC Hallucination project that pr
 - Scenario generation with custom parameters
 - Model training with multiple algorithms
 - Distribution shift testing (unison and targeted)
+- Baseline vs shift matrix analysis (cross-scenario robustness testing)
 - Hallucination detection and analysis  
 - Visualization and reporting
 - Model evaluation and checkpoint management
@@ -23,6 +24,10 @@ Usage examples:
     # Run shift testing
     python atc_cli.py test-shifts --checkpoint latest --scenario parallel --episodes 5
     python atc_cli.py test-shifts --targeted --episodes 3 --viz
+    
+    # Baseline vs shift matrix analysis (cross-scenario robustness testing)
+    python atc_cli.py baseline-vs-shift-matrix --episodes 5 --use-gpu
+    python atc_cli.py baseline-vs-shift-matrix --extensive --models-index models_config.json
     
     # Analyze and visualize
     python atc_cli.py analyze --results-dir results_PPO_head_on_20250923_190203
@@ -175,7 +180,8 @@ class ATCController:
     
     def run_shift_testing(self, checkpoint_path: Optional[str] = None, scenario_name: str = "parallel", 
                          episodes: int = 3, targeted: bool = True, generate_viz: bool = False,
-                         algo: str = "PPO") -> Optional[str]:
+                         algo: str = "PPO", seeds: Optional[List[int]] = None, 
+                         outdir: Optional[str] = None) -> Optional[str]:
         """Run distribution shift testing (unison or targeted)."""
         try:
             # Clean up any existing Ray processes first
@@ -208,7 +214,9 @@ class ATCController:
                     checkpoint_path=checkpoint_path,
                     scenario_name=scenario_name,
                     episodes_per_shift=episodes,
-                    generate_viz=generate_viz
+                    seeds=seeds,
+                    generate_viz=generate_viz,
+                    outdir=outdir
                 )
                 
                 logger.info(f"Targeted shift testing completed: {result_path}")
@@ -329,6 +337,56 @@ class ATCController:
             logger.error(f"Visualization failed: {e}")
             return []
     
+    def run_baseline_vs_shift_matrix(self, models_index: Optional[str] = None, models_dir: str = "models",
+                                     episodes: int = 5, outdir: str = "results_baseline_vs_shift",
+                                     use_gpu: bool = False, extensive: bool = False,
+                                     scenarios_dir: str = "scenarios") -> Optional[str]:
+        """Run baseline vs shift matrix analysis comparing trained models against scenario shifts."""
+        try:
+            # Import the baseline_vs_shift_matrix module
+            from src.testing.baseline_vs_shift_matrix import main as run_matrix_analysis
+            import sys
+            
+            # Prepare arguments for the matrix analysis
+            matrix_args = [
+                "--models-dir", str(self.repo_root / models_dir),
+                "--scenarios-dir", str(self.repo_root / scenarios_dir),
+                "--episodes", str(episodes),
+                "--outdir", str(self.repo_root / outdir)
+            ]
+            
+            if models_index:
+                matrix_args.extend(["--models-index", models_index])
+            
+            if use_gpu:
+                matrix_args.append("--use-gpu")
+            
+            if extensive:
+                matrix_args.append("--extensive")
+            
+            # Save current sys.argv and replace with our arguments
+            original_argv = sys.argv
+            sys.argv = ["baseline_vs_shift_matrix.py"] + matrix_args
+            
+            try:
+                logger.info("🔬 Running baseline vs shift matrix analysis...")
+                logger.info(f"Arguments: {' '.join(matrix_args)}")
+                
+                # Run the matrix analysis
+                run_matrix_analysis()
+                
+                result_path = str(self.repo_root / outdir / "baseline_vs_shift_summary.csv")
+                logger.info(f"✅ Baseline vs shift matrix analysis completed: {result_path}")
+                return result_path
+                
+            finally:
+                # Restore original sys.argv
+                sys.argv = original_argv
+                
+        except Exception as e:
+            logger.error(f"Baseline vs shift matrix analysis failed: {e}")
+            return None
+
     def full_pipeline(self, scenario_name: str, algo: str = "PPO", 
                      train_timesteps: int = 50000, test_episodes: int = 3,
                      targeted_shifts: bool = True, generate_viz: bool = True,
@@ -665,6 +723,10 @@ def main():
                             help="Algorithm type")
     test_parser.add_argument("--viz", action="store_true",
                             help="Generate visualizations")
+    test_parser.add_argument("--seeds", type=str,
+                            help="Comma-separated list of seeds for reproducible episodes (e.g., 42,123,456)")
+    test_parser.add_argument("--outdir", type=str,
+                            help="Custom output directory name (default: timestamped)")
     
     # Analysis
     analyze_parser = subparsers.add_parser("analyze", help="Analyze results")
@@ -698,6 +760,24 @@ def main():
                                  help="Skip visualization generation")
     pipeline_parser.add_argument("--log-trajectories", action="store_true",
                                  help="Enable detailed trajectory logging during training")
+    
+    # Baseline vs Shift Matrix testing
+    matrix_parser = subparsers.add_parser("baseline-vs-shift-matrix", 
+                                         help="Test trained models against scenario shifts for robustness analysis")
+    matrix_parser.add_argument("--models-index", type=str,
+                              help="JSON file with model mappings: {'models': {'alias': 'path', ...}, 'baselines': {...}}")
+    matrix_parser.add_argument("--models-dir", type=str, default="models",
+                              help="Directory containing model checkpoints (default: models)")
+    matrix_parser.add_argument("--episodes", "-e", type=int, default=5,
+                              help="Episodes per scenario test (default: 5)")
+    matrix_parser.add_argument("--outdir", type=str, default="results_baseline_vs_shift",
+                              help="Output directory for results (default: results_baseline_vs_shift)")
+    matrix_parser.add_argument("--use-gpu", action="store_true",
+                              help="Enable GPU acceleration for faster testing")
+    matrix_parser.add_argument("--extensive", action="store_true",
+                              help="Run extensive testing with 10+ episodes and enhanced analysis")
+    matrix_parser.add_argument("--scenarios-dir", type=str, default="scenarios",
+                              help="Directory containing scenario files (default: scenarios)")
     
     # List commands
     list_parser = subparsers.add_parser("list", help="List available resources")
@@ -763,13 +843,25 @@ def main():
                 sys.exit(1)
         
         elif args.command == "test-shifts":
+            # Parse seeds if provided
+            seeds = None
+            if args.seeds:
+                try:
+                    seeds = [int(s.strip()) for s in args.seeds.split(',')]
+                except ValueError:
+                    print(f"Error: Invalid seeds format: {args.seeds}")
+                    print("Use comma-separated integers, e.g., --seeds 42,123,456")
+                    sys.exit(1)
+            
             result = controller.run_shift_testing(
                 checkpoint_path=args.checkpoint,
                 scenario_name=args.scenario,
                 episodes=args.episodes,
                 targeted=args.targeted,
                 generate_viz=args.viz,
-                algo=args.algo
+                algo=args.algo,
+                seeds=seeds,
+                outdir=args.outdir
             )
             if result:
                 print(f"Shift testing completed: {result}")
@@ -798,6 +890,27 @@ def main():
             print(f"Generated {len(files)} visualization files:")
             for file in files:
                 print(f"  {file}")
+        
+        elif args.command == "baseline-vs-shift-matrix":
+            result = controller.run_baseline_vs_shift_matrix(
+                models_index=args.models_index,
+                models_dir=args.models_dir,
+                episodes=args.episodes,
+                outdir=args.outdir,
+                use_gpu=args.use_gpu,
+                extensive=args.extensive,
+                scenarios_dir=args.scenarios_dir
+            )
+            if result:
+                print(f"Baseline vs shift matrix analysis completed: {result}")
+                print("\n📊 Generated comprehensive robustness analysis comparing trained models against scenario shifts.")
+                print("📁 Check the output directory for:")
+                print("  • baseline_vs_shift_summary.csv (Performance metrics)")
+                print("  • summary_*.png (Visualization plots)")
+                print("  • Interactive trajectory visualizations")
+            else:
+                print("Baseline vs shift matrix analysis failed.")
+                sys.exit(1)
         
         elif args.command == "full-pipeline":
             results = controller.full_pipeline(

@@ -197,7 +197,7 @@ def csv_to_trajectory(csv_path: str) -> Dict:
 
 def metrics_from_csv(csv_path: str, sep_nm: float = 5.0) -> Dict[str, float]:
     traj = csv_to_trajectory(csv_path)
-    hd = HallucinationDetector(action_thresh=(3.0, 5.0), horizon_s=300.0, res_window_s=90.0, action_period_s=10.0)
+    hd = HallucinationDetector(action_thresh=(3.0, 5.0), horizon_s=120.0, res_window_s=60.0, action_period_s=10.0)
     m = hd.compute(traj, sep_nm=sep_nm, return_series=False)
     
     # SAFETY: fix key name (was "min_cpa_nm")
@@ -277,6 +277,108 @@ def plot_minsep(csv_path: str, out_png: str, title: str):
     plt.xlabel("Step"); plt.ylabel("Min sep [NM]"); plt.title(title); plt.grid(True, alpha=.3)
     plt.tight_layout(); plt.savefig(out_png, dpi=140); plt.close()
 
+def generate_scenario_centric_visualizations(results_data: Dict, scen_map: Dict[str, str], outdir: pathlib.Path):
+    """
+    Generate scenario-centric visualizations showing how all models perform on each scenario.
+    
+    Args:
+        results_data: Dict with structure {scenario: {model: {'type': 'baseline'/'shift', 'csv_path': str}}}
+        scen_map: Dict mapping scenario names to scenario JSON paths
+        outdir: Output directory for visualizations
+    """
+    print(f"\n🎨 Generating Scenario-Centric Visualizations")
+    print("=" * 60)
+    
+    # Create master scenario visualization directory
+    scenario_viz_dir = outdir / "scenario_centric_visualizations"
+    scenario_viz_dir.mkdir(parents=True, exist_ok=True)
+    
+    for scenario, model_data in results_data.items():
+        print(f"\n📊 Creating visualizations for scenario: {scenario}")
+        
+        # Create scenario-specific directory
+        scn_dir = scenario_viz_dir / f"scenario_{scenario}_analysis"
+        scn_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Separate baseline and shift models
+        baseline_csvs = {}
+        shift_csvs = {}
+        
+        for model, info in model_data.items():
+            if info['type'] == 'baseline':
+                baseline_csvs[model] = info['csv_path']
+                print(f"  🏠 Baseline: {model} (trained on {scenario})")
+            else:
+                shift_csvs[model] = info['csv_path']
+                print(f"  🔄 Shift: {model} (trained elsewhere)")
+        
+        # Generate combined visualization if we have both baseline and shift data
+        if baseline_csvs and shift_csvs and create_trajectory_comparison_plot is not None:
+            # Create combined trajectory plot
+            all_trajectories = {}
+            all_trajectories.update({f"{model}_baseline": csv for model, csv in baseline_csvs.items()})
+            all_trajectories.update({f"{model}_shift": csv for model, csv in shift_csvs.items()})
+            
+            combined_plot_file = scn_dir / f"scenario_{scenario}_all_models_comparison.html"
+            combined_title = f"Scenario Analysis: {scenario.title()} - All Models (Baseline vs Shift)"
+            
+            print(f"    📈 Creating combined plot: {combined_plot_file.name}")
+            
+            success = create_trajectory_comparison_plot(
+                baseline_csv=list(baseline_csvs.values())[0],  # Use first baseline as reference
+                shift_csvs=all_trajectories,
+                out_html=str(combined_plot_file),
+                title=combined_title,
+                scenario_path=scen_map.get(scenario)
+            )
+            
+            if success:
+                print(f"      ✅ Generated: {combined_plot_file.name}")
+            
+            # Generate individual baseline vs shift comparisons
+            for baseline_model, baseline_csv in baseline_csvs.items():
+                for shift_model, shift_csv in shift_csvs.items():
+                    comparison_file = scn_dir / f"scenario_{scenario}_{baseline_model}_vs_{shift_model}.html"
+                    comparison_title = f"Scenario {scenario.title()}: {baseline_model} (Baseline) vs {shift_model} (Shift)"
+                    
+                    success = create_trajectory_comparison_plot(
+                        baseline_csv=baseline_csv,
+                        shift_csvs={f"{shift_model}_shift": shift_csv},
+                        out_html=str(comparison_file),
+                        title=comparison_title,
+                        scenario_path=scen_map.get(scenario)
+                    )
+                    
+                    if success:
+                        print(f"      ✅ Generated: {comparison_file.name}")
+        
+        # Generate maps if available
+        if baseline_csvs and shift_csvs and create_comparison_map is not None:
+            print(f"    🗺️  Creating trajectory maps...")
+            
+            for baseline_model, baseline_csv in baseline_csvs.items():
+                for shift_model, shift_csv in shift_csvs.items():
+                    map_file = scn_dir / f"scenario_{scenario}_{baseline_model}_vs_{shift_model}_map.html"
+                    map_title = f"Scenario {scenario.title()}: {baseline_model} vs {shift_model}"
+                    
+                    success = create_comparison_map(
+                        baseline_csv=baseline_csv,
+                        shifted_csv=shift_csv,
+                        out_html=str(map_file),
+                        title=map_title
+                    )
+                    
+                    if success:
+                        print(f"      ✅ Generated: {map_file.name}")
+        
+        # Create scenario navigation index
+        create_scenario_navigation_index(scn_dir, scenario, list(baseline_csvs.keys()), list(shift_csvs.keys()))
+    
+    # Create master navigation index
+    create_master_navigation_index(scenario_viz_dir, list(results_data.keys()))
+    
+    return str(scenario_viz_dir)
+
 def generate_enhanced_visualizations(alias: str, base_scn: str, base_csv: str, shift_csvs: Dict[str, str], 
                                    scen_map: Dict[str, str], viz_dir: pathlib.Path):
     """
@@ -355,6 +457,283 @@ def generate_enhanced_visualizations(alias: str, base_scn: str, base_csv: str, s
         
     except Exception as e:
         print(f"    ❌ Error generating enhanced visualizations: {e}")
+
+def create_scenario_navigation_index(scn_dir: pathlib.Path, scenario: str, baseline_models: List[str], shift_models: List[str]):
+    """
+    Create an HTML navigation index for a specific scenario analysis.
+    """
+    index_file = scn_dir / f"scenario_{scenario}_index.html"
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Scenario Analysis: {scenario.title()}</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 20px; background-color: #f8f9fa; }}
+            .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 20px; border-radius: 10px; text-align: center; margin-bottom: 20px; }}
+            h1 {{ margin: 0; font-size: 2em; }}
+            h2 {{ color: #333; border-bottom: 3px solid #667eea; padding-bottom: 10px; margin-top: 30px; }}
+            .model-summary {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0; }}
+            .model-card {{
+                background: white;
+                border-radius: 10px;
+                padding: 20px;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                border-left: 5px solid #28a745;
+            }}
+            .model-card.shift {{ border-left-color: #ffc107; }}
+            .viz-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin: 20px 0; }}
+            .viz-card {{
+                background: white;
+                border-radius: 10px;
+                padding: 20px;
+                box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+                text-align: center;
+                transition: transform 0.2s;
+            }}
+            .viz-card:hover {{ transform: translateY(-5px); }}
+            .viz-card h3 {{ margin-top: 0; color: #333; }}
+            .viz-card a {{
+                display: inline-block;
+                background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                color: white;
+                padding: 10px 20px;
+                text-decoration: none;
+                border-radius: 25px;
+                margin: 5px;
+                font-weight: bold;
+                transition: transform 0.2s;
+            }}
+            .viz-card a:hover {{ transform: scale(1.05); }}
+            .description {{ color: #666; margin: 10px 0; line-height: 1.6; }}
+            .icon {{ font-size: 1.2em; margin-right: 8px; }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>🛩️ Scenario Analysis Dashboard</h1>
+            <h2 style="margin: 10px 0 0 0; border: none;">Scenario: {scenario.title()}</h2>
+        </div>
+        
+        <div class="description">
+            <p><strong>Scenario-centric analysis</strong> showing how different models perform on the <strong>{scenario}</strong> scenario.</p>
+            <p>Compare baseline performance (models trained on this scenario) vs shift performance (models trained on other scenarios).</p>
+        </div>
+        
+        <h2><span class="icon">🤖</span>Model Performance Overview</h2>
+        <div class="model-summary">
+            <div class="model-card">
+                <h3><span class="icon">🏠</span>Baseline Models</h3>
+                <p><strong>Trained on {scenario}:</strong></p>
+                <p>{', '.join(baseline_models) if baseline_models else 'None'}</p>
+                <p><em>Expected to perform optimally on this scenario</em></p>
+            </div>
+            <div class="model-card shift">
+                <h3><span class="icon">🔄</span>Shift Models</h3>
+                <p><strong>Trained on other scenarios:</strong></p>
+                <p>{', '.join(shift_models) if shift_models else 'None'}</p>
+                <p><em>Tests generalization capability</em></p>
+            </div>
+        </div>
+        
+        <h2><span class="icon">📊</span>Combined Analysis</h2>
+        <div class="viz-grid">
+            <div class="viz-card">
+                <h3>🌟 All Models Comparison</h3>
+                <div class="description">Interactive plot showing all baseline and shift performances on {scenario} scenario</div>
+                <a href="./scenario_{scenario}_all_models_comparison.html" target="_blank">🔍 View Combined Analysis</a>
+            </div>
+        </div>
+        
+        <h2><span class="icon">📈</span>Individual Comparisons</h2>
+        <div class="viz-grid">
+    """
+    
+    # Add individual comparison cards
+    for baseline_model in baseline_models:
+        for shift_model in shift_models:
+            html_content += f"""
+                <div class="viz-card">
+                    <h3>🆚 {baseline_model} vs {shift_model}</h3>
+                    <div class="description">Baseline vs Shift comparison on {scenario} scenario</div>
+                    <a href="./scenario_{scenario}_{baseline_model}_vs_{shift_model}.html" target="_blank">📊 View Plot</a>
+                    <a href="./scenario_{scenario}_{baseline_model}_vs_{shift_model}_map.html" target="_blank">🗺️ View Map</a>
+                </div>
+            """
+    
+    html_content += f"""
+        </div>
+        
+        <h2><span class="icon">🎯</span>Key Insights</h2>
+        <div class="description" style="background: white; padding: 20px; border-radius: 10px; box-shadow: 0 2px 4px rgba(0,0,0,0.1);">
+            <ul style="list-style-type: none; padding: 0;">
+                <li><span class="icon">🏆</span><strong>Baseline Performance:</strong> How models trained on {scenario} perform (expected to be optimal)</li>
+                <li><span class="icon">🔄</span><strong>Shift Performance:</strong> How models trained on other scenarios perform (tests generalization)</li>
+                <li><span class="icon">📉</span><strong>Domain Specificity:</strong> Performance drops in shifts indicate scenario-specific learning</li>
+                <li><span class="icon">💪</span><strong>Robustness:</strong> Smaller performance drops indicate better generalization</li>
+            </ul>
+        </div>
+        
+        <div style="text-align: center; margin-top: 40px; padding: 20px; background: white; border-radius: 10px;">
+            <p><a href="../master_scenario_analysis_index.html" style="background: #28a745; color: white; padding: 15px 30px; text-decoration: none; border-radius: 25px; font-weight: bold;">🏠 Back to Master Index</a></p>
+        </div>
+        
+        <hr style="margin: 40px 0; border: none; height: 1px; background: #ddd;">
+        <p style="text-align: center; color: #666; font-size: 0.9em;">
+            Generated by scenario-centric baseline vs shift matrix analysis
+        </p>
+    </body>
+    </html>
+    """
+    
+    try:
+        with open(index_file, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+        print(f"      ✅ Generated scenario index: {index_file.name}")
+    except Exception as e:
+        print(f"      ❌ Failed to generate scenario index: {e}")
+
+def create_master_navigation_index(viz_dir: pathlib.Path, scenarios: List[str]):
+    """
+    Create a master navigation index for all scenario analyses.
+    """
+    master_index = viz_dir / "master_scenario_analysis_index.html"
+    
+    html_content = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>ATC Scenario Analysis - Master Dashboard</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 0; padding: 20px; background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%); min-height: 100vh; }}
+            .header {{ background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 40px; border-radius: 20px; text-align: center; margin-bottom: 30px; box-shadow: 0 10px 20px rgba(0,0,0,0.1); }}
+            h1 {{ margin: 0; font-size: 3em; font-weight: 300; }}
+            .subtitle {{ font-size: 1.2em; margin-top: 10px; opacity: 0.9; }}
+            .scenario-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(350px, 1fr)); gap: 25px; margin: 30px 0; }}
+            .scenario-card {{
+                background: white;
+                border-radius: 15px;
+                padding: 30px;
+                text-align: center;
+                box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+                transition: all 0.3s ease;
+                border-top: 5px solid #667eea;
+            }}
+            .scenario-card:hover {{ transform: translateY(-10px); box-shadow: 0 15px 30px rgba(0,0,0,0.15); }}
+            .scenario-card h3 {{ margin-top: 0; color: #333; font-size: 1.5em; }}
+            .scenario-card a {{
+                display: inline-block;
+                background: linear-gradient(135deg, #28a745 0%, #20c997 100%);
+                color: white;
+                padding: 15px 30px;
+                text-decoration: none;
+                border-radius: 30px;
+                margin: 15px;
+                font-weight: bold;
+                font-size: 1.1em;
+                transition: all 0.3s ease;
+                box-shadow: 0 4px 8px rgba(40, 167, 69, 0.3);
+            }}
+            .scenario-card a:hover {{ transform: scale(1.05); box-shadow: 0 6px 12px rgba(40, 167, 69, 0.4); }}
+            .description {{ color: #666; margin: 20px 0; line-height: 1.8; font-size: 1.1em; }}
+            .feature-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 20px; margin: 40px 0; }}
+            .feature-card {{ background: white; padding: 25px; border-radius: 10px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }}
+            .icon {{ font-size: 2em; margin-bottom: 10px; }}
+            .stats {{ background: rgba(255,255,255,0.1); padding: 20px; border-radius: 10px; margin: 20px 0; }}
+        </style>
+    </head>
+    <body>
+        <div class="header">
+            <h1>🛩️ ATC Scenario Analysis</h1>
+            <div class="subtitle">Master Dashboard - Scenario-Centric Baseline vs Shift Analysis</div>
+            <div class="stats">
+                <strong>📊 {len(scenarios)} Scenarios Analyzed</strong>
+            </div>
+        </div>
+        
+        <div class="description">
+            <p><strong>Revolutionary scenario-centric approach:</strong> Instead of asking "How does model X perform on different scenarios?", 
+            we now ask "How do all models perform on scenario X?"</p>
+            <p>This provides deeper insights into scenario-specific learning patterns and cross-domain generalization capabilities.</p>
+        </div>
+        
+        <div class="scenario-grid">
+    """
+    
+    # Add scenario cards with enhanced styling
+    scenario_icons = {
+        'head_on': '✈️➡️⬅️✈️',
+        'parallel': '✈️➡️➡️✈️',
+        't_formation': '✈️⬆️⬇️✈️',
+        'converging': '✈️↗️↙️✈️',
+        'canonical_crossing': '✈️↗️↘️✈️'
+    }
+    
+    for scenario in scenarios:
+        icon = scenario_icons.get(scenario, '✈️🎯')
+        html_content += f"""
+            <div class="scenario-card">
+                <div class="icon">{icon}</div>
+                <h3>📊 {scenario.title().replace('_', ' ')} Scenario</h3>
+                <div class="description">Comprehensive analysis of all model performances on the {scenario.replace('_', ' ')} scenario</div>
+                <a href="./scenario_{scenario}_analysis/scenario_{scenario}_index.html" target="_blank">🔍 Explore Analysis</a>
+            </div>
+        """
+    
+    html_content += f"""
+        </div>
+        
+        <div class="feature-grid">
+            <div class="feature-card">
+                <div class="icon">🔄</div>
+                <h3>Before vs After</h3>
+                <p><strong>Before:</strong> Model-centric - "How does model X perform on different scenarios?"</p>
+                <p><strong>After:</strong> Scenario-centric - "How do all models perform on scenario X?"</p>
+            </div>
+            <div class="feature-card">
+                <div class="icon">🎯</div>
+                <h3>Key Benefits</h3>
+                <p>• Direct baseline vs shift comparison per scenario</p>
+                <p>• Understand domain-specific learning patterns</p>
+                <p>• Identify robust vs specialized models</p>
+            </div>
+            <div class="feature-card">
+                <div class="icon">📈</div>
+                <h3>Analysis Features</h3>
+                <p>• Interactive trajectory visualizations</p>
+                <p>• Geographic map overlays</p>
+                <p>• Performance metrics comparison</p>
+            </div>
+            <div class="feature-card">
+                <div class="icon">🔍</div>
+                <h3>Research Insights</h3>
+                <p>• Scenario difficulty assessment</p>
+                <p>• Model generalization capability</p>
+                <p>• Safety risk identification</p>
+            </div>
+        </div>
+        
+        <div style="text-align: center; margin-top: 50px; padding: 30px; background: white; border-radius: 15px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+            <h2 style="color: #333; margin-bottom: 20px;">🚀 Get Started</h2>
+            <p style="font-size: 1.1em; color: #666; margin-bottom: 20px;">Select any scenario above to dive into the detailed analysis and discover how different models perform!</p>
+        </div>
+        
+        <hr style="margin: 50px 0; border: none; height: 2px; background: linear-gradient(90deg, transparent, #667eea, transparent);">
+        <p style="text-align: center; color: #666; font-size: 0.9em;">
+            Generated by enhanced scenario-centric baseline vs shift matrix analysis | Improved visualization structure
+        </p>
+    </body>
+    </html>
+    """
+    
+    try:
+        with open(master_index, 'w', encoding='utf-8') as f:
+            f.write(html_content)
+        print(f"\n🎉 Generated master navigation index: {master_index.name}")
+        print(f"📂 Open this file to navigate all scenario analyses: {master_index}")
+    except Exception as e:
+        print(f"❌ Failed to generate master index: {e}")
 
 def create_visualization_index(viz_dir: pathlib.Path, alias: str, base_scn: str, shift_scenarios: List[str]):
     """
@@ -518,6 +897,9 @@ def main():
         explicit_baselines = {}
 
     all_rows = []
+    # Collect scenario-centric data for new visualization approach
+    scenario_results = {}  # {scenario: {model: {'type': 'baseline'/'shift', 'csv_path': str}}}
+    
     for alias, ckpt in models.items():
         # Figure baseline scenario name
         base_scn = explicit_baselines.get(alias) \
@@ -548,6 +930,11 @@ def main():
         bc = base_df.iloc[0]["traj_csv"]
         plot_overlay(bc, str(base_dir/"overlay.png"), f"{alias} on {base_scn} – ep1")
         plot_minsep(bc,  str(base_dir/"minsep.png"),  f"{alias} on {base_scn} – min sep")
+        
+        # Collect for scenario-centric visualization
+        if base_scn not in scenario_results:
+            scenario_results[base_scn] = {}
+        scenario_results[base_scn][alias] = {'type': 'baseline', 'csv_path': bc}
 
         # --- Shifted runs on all other scenarios ---
         shift_csvs = {}  # Collect shift trajectory CSVs for enhanced visualization
@@ -569,6 +956,11 @@ def main():
 
             # Store CSV path for enhanced visualization
             shift_csvs[scen] = c
+            
+            # Collect for scenario-centric visualization
+            if scen not in scenario_results:
+                scenario_results[scen] = {}
+            scenario_results[scen][alias] = {'type': 'shift', 'csv_path': c}
 
             # aggregate + deltas vs baseline
             row = {
@@ -615,7 +1007,14 @@ def main():
     # Performance summary
     total_episodes_tested = len(all_rows) * args.episodes
     unique_models = len(set(row['model_alias'] for row in all_rows))
-    unique_scenarios = len(set(row['scenario'] for row in all_rows))
+    unique_scenarios = len(set(row['test_scenario'] for row in all_rows))
+    
+    # Generate scenario-centric visualizations
+    if scenario_results:
+        scenario_viz_path = generate_scenario_centric_visualizations(scenario_results, scen_map, outdir)
+        print(f"\n🎨 Scenario-Centric Visualizations Generated!")
+        print(f"📁 Navigate to: {scenario_viz_path}/master_scenario_analysis_index.html")
+        print(f"🔄 New approach: See how all models perform on each scenario!")
     
     print(f"\n🎯 ANALYSIS COMPLETE! Results → {outdir}")
     print(f"📊 Performance Summary:")
@@ -629,13 +1028,18 @@ def main():
     print(f"\n📁 Generated Files:")
     print("   • baseline_vs_shift_summary.csv (Statistical results)")
     print("   • summary_*.png (Matplotlib visualizations)")
-    print("   • Interactive visualizations in <model>__visualizations/ directories:")
+    print("   • Model-centric visualizations in <model>__visualizations/ directories:")
     print("     ○ trajectory_comparison_*.html (Plotly interactive plots)")
     print("     ○ trajectory_map_*.html (Folium interactive maps)")
     print("     ○ visualization_index_*.html (Navigation dashboards)")
+    print("   • 🆕 Scenario-centric visualizations in scenario_centric_visualizations/:")
+    print("     ○ master_scenario_analysis_index.html (Main dashboard)")
+    print("     ○ scenario_*_analysis/ (Per-scenario detailed analysis)")
+    print("     ○ Interactive plots and maps for each scenario")
     
     print(f"\n🌐 Quick Access:")
-    print(f"   Open the visualization_index_*.html files for easy access to all interactive content!")
+    print(f"   🔥 NEW: scenario_centric_visualizations/master_scenario_analysis_index.html")
+    print(f"   📊 Traditional: visualization_index_*.html files for model-centric views")
     
     if use_gpu:
         print(f"\n⚡ GPU acceleration was used for faster inference and testing.")

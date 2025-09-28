@@ -99,7 +99,7 @@ def kt_to_nms(kt: float) -> float:
 
 def compute_tcpa_dcpa_nm(lat_i, lon_i, vi_east_nms, vi_north_nms,
                          lat_j, lon_j, vj_east_nms, vj_north_nms,
-                         horizon_s: float = 300.0) -> Tuple[float, float]:
+                         horizon_s: float = 120.0) -> Tuple[float, float]:
     """
     Compute Time to Closest Point of Approach (TCPA) and Distance at CPA (DCPA).
     
@@ -143,9 +143,9 @@ class HallucinationDetector:
     TCPA/DCPA-based conflict predictions with policy action patterns. Uses sophisticated
     intent-aware filtering and threat-aware gating to minimize false positives.
     """
-    
-    def __init__(self, horizon_s: float = 180.0, action_thresh=(3.0, 5.0),
-                 res_window_s: float = 90.0, action_period_s: float = 10.0,
+
+    def __init__(self, horizon_s: float = 120.0, action_thresh=(3.0, 5.0),
+                 res_window_s: float = 60.0, action_period_s: float = 10.0,
                  los_threshold_nm: float = 5.0, lag_pre_steps: int = 1,
                  lag_post_steps: int = 1, debounce_n: int = 2, debounce_m: int = 3,
                  iou_threshold: float = 0.1):

@@ -209,6 +209,30 @@ def create_trajectory_comparison_plot(baseline_csv: str, shift_csvs: Dict[str, s
                 ),
                 row=1, col=i
             )
+            
+            # Add red star for start point (baseline)
+            if len(agent_data) > 0:
+                start_point = agent_data.iloc[0]
+                fig.add_trace(
+                    go.Scatter(
+                        x=[start_point['lon_normalized']],
+                        y=[start_point['lat_normalized']],
+                        mode='markers',
+                        name='Start Point' if i == 1 else None,  # Only add to legend once
+                        marker=dict(
+                            size=12,
+                            color='red',
+                            symbol='star',
+                            line=dict(width=2, color='darkred')
+                        ),
+                        hovertemplate=f"<b>Start Point - {agent}</b><br>" +
+                                    "Δ Longitude: %{x:.6f}°<br>" +
+                                    "Δ Latitude: %{y:.6f}°<br>" +
+                                    "<extra></extra>",
+                        showlegend=(i == 1)  # Only show in legend for first agent
+                    ),
+                    row=1, col=i
+                )
         
         # Plot shift trajectories
         for shift_name, shift_csv in shift_csvs.items():
@@ -264,6 +288,30 @@ def create_trajectory_comparison_plot(baseline_csv: str, shift_csvs: Dict[str, s
                         ),
                         row=1, col=i
                     )
+                    
+                    # Add red star for start point (shift trajectories)
+                    if len(agent_data) > 0:
+                        start_point = agent_data.iloc[0]
+                        fig.add_trace(
+                            go.Scatter(
+                                x=[start_point['lon_normalized']],
+                                y=[start_point['lat_normalized']],
+                                mode='markers',
+                                name=None,  # Don't add to legend (already added for baseline)
+                                marker=dict(
+                                    size=12,
+                                    color='red',
+                                    symbol='star',
+                                    line=dict(width=2, color='darkred')
+                                ),
+                                hovertemplate=f"<b>Start Point - {agent} ({shift_name})</b><br>" +
+                                            "Δ Longitude: %{x:.6f}°<br>" +
+                                            "Δ Latitude: %{y:.6f}°<br>" +
+                                            "<extra></extra>",
+                                showlegend=False  # Don't show in legend
+                            ),
+                            row=1, col=i
+                        )
                     
             except Exception as e:
                 print(f"Warning: Failed to process {shift_name}: {e}")

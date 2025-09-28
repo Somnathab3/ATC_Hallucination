@@ -16,6 +16,7 @@ results_*/
 *_analysis_*/
 shift_analysis_*/
 targeted_shift_analysis_*/
+tests/
 *.zip
 
 # Temporary and Cache Files
