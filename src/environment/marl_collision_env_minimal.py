@@ -321,7 +321,7 @@ class MARLCollisionEnv(ParallelEnv):
                 self._hallucination_detector = HallucinationDetector(
                     action_period_s=10.0,  # Match environment timestep
                     res_window_s=60.0,
-                    horizon_s=300.0,
+                    horizon_s=120.0,
                     action_thresh=(3.0, 5.0)  # deg, kt thresholds
                 )
                 # Store trajectory data for real-time analysis

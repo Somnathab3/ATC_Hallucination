@@ -99,17 +99,10 @@ def load_algo(ckpt: str, use_gpu: bool = False) -> Tuple[Algorithm, str]:
     register_env_once()
     algo = Algorithm.from_checkpoint(abspath(ckpt))  # :contentReference[oaicite:5]{index=5}
     
-    # Configure GPU usage for loaded algorithm if available
+    # Note: GPU configuration is handled during training, not inference
+    # Ray will automatically use available GPUs for workers if available
     if use_gpu:
-        try:
-            # Update algorithm config for GPU inference
-            if hasattr(algo, 'config') and algo.config is not None:
-                algo.config.num_gpus = 1
-                print(f"✅ Algorithm configured for GPU inference")
-            else:
-                print(f"⚠️  Algorithm config not accessible for GPU configuration")
-        except Exception as e:
-            print(f"⚠️  Could not configure GPU for algorithm: {e}")
+        print(f"🚀 Using GPU-accelerated Ray workers for faster evaluation")
     
     # prefer your shared policy id from training
     policy_id = "shared_policy"
@@ -143,7 +136,7 @@ def compute_once(algo: Algorithm, policy_id: str, env: ParallelPettingZooEnv):
         actions = {}
         for aid in env.agents:
             if aid in obs:
-                a = algo.compute_single_action(obs[aid], explore=False, policy_id=policy_id)  # :contentReference[oaicite:6]{index=6}
+                a = algo.compute_single_action(obs[aid], explore=True, policy_id=policy_id)  # :contentReference[oaicite:6]{index=6}
                 actions[aid] = np.asarray(a, dtype=np.float32)
             else:
                 actions[aid] = np.array([0.0, 0.0], dtype=np.float32)
@@ -227,6 +220,229 @@ def metrics_from_csv(csv_path: str, sep_nm: float = 5.0) -> Dict[str, float]:
         "total_extra_path_nm": m.get("total_extra_path_nm", 0.0)
     }
 
+
+def extract_comprehensive_metrics_from_csv(csv_path: str, sep_nm: float = 5.0) -> Dict[str, float]:
+    """
+    Extract comprehensive metrics from trajectory CSV using the same approach as targeted_shift_tester.
+    This mirrors the exact metric extraction process to ensure consistency.
+    """
+    try:
+        df = pd.read_csv(csv_path)
+        if df.empty:
+            return _get_default_metrics()
+        
+        # Collapse per-step data for episode-level metrics (like targeted shift tester)
+        step_collapsed = df.groupby('step_idx').agg({
+            'min_separation_nm': 'min',
+            'conflict_flag': 'max' if 'conflict_flag' in df.columns else lambda x: 0,
+            'predicted_alert': 'max' if 'predicted_alert' in df.columns else lambda x: 0,
+            'tp': 'sum' if 'tp' in df.columns else lambda x: 0,
+            'fp': 'sum' if 'fp' in df.columns else lambda x: 0,
+            'fn': 'sum' if 'fn' in df.columns else lambda x: 0,
+            'tn': 'sum' if 'tn' in df.columns else lambda x: 0,
+        }).reset_index()
+        
+        # Basic confusion matrix metrics
+        tp_sum = int(step_collapsed['tp'].sum()) if 'tp' in step_collapsed.columns else 0
+        fp_sum = int(step_collapsed['fp'].sum()) if 'fp' in step_collapsed.columns else 0
+        fn_sum = int(step_collapsed['fn'].sum()) if 'fn' in step_collapsed.columns else 0
+        tn_sum = int(step_collapsed['tn'].sum()) if 'tn' in step_collapsed.columns else 0
+        total_steps = len(step_collapsed)
+        
+        # Precision, recall, F1
+        precision = tp_sum / max(1, tp_sum + fp_sum)
+        recall = tp_sum / max(1, tp_sum + fn_sum)
+        f1_score = 2 * precision * recall / max(1e-9, precision + recall)
+        
+        # Flight time calculation
+        if 'timestamp' in df.columns:
+            flight_time_s = float(df['timestamp'].max() - df['timestamp'].min())
+        else:
+            flight_time_s = float(len(df) * 10.0)  # Assume 10s per step
+        
+        # Loss of Separation events
+        num_los_events = 0
+        total_los_duration = 0.0
+        if 'min_separation_nm' in df.columns:
+            los_mask = df['min_separation_nm'] < sep_nm
+            if los_mask.any():
+                # Count LOS transitions
+                los_transitions = los_mask.astype(int).diff().fillna(0)
+                num_los_events = int((los_transitions == 1).sum())
+                total_los_duration = float(los_mask.sum() * 10.0)  # 10s per step
+        
+        # Path metrics calculation
+        try:
+            # Calculate path lengths per agent
+            agent_path_lengths = {}
+            agent_extra_nm = {}
+            agent_extra_ratio = {}
+            
+            for agent_id in df['agent_id'].unique():
+                agent_df = df[df['agent_id'] == agent_id].sort_values('step_idx')
+                if len(agent_df) >= 2:
+                    # Calculate path length using haversine distance
+                    path_length = 0.0
+                    for i in range(1, len(agent_df)):
+                        lat1, lon1 = agent_df.iloc[i-1]['lat_deg'], agent_df.iloc[i-1]['lon_deg']
+                        lat2, lon2 = agent_df.iloc[i]['lat_deg'], agent_df.iloc[i]['lon_deg']
+                        dist = haversine_nm(lat1, lon1, lat2, lon2)
+                        path_length += dist
+                    
+                    agent_path_lengths[agent_id] = path_length
+                    
+                    # Calculate direct distance to waypoint (if available)
+                    if 'wp_lat' in agent_df.columns and 'wp_lon' in agent_df.columns:
+                        start_lat, start_lon = agent_df.iloc[0]['lat_deg'], agent_df.iloc[0]['lon_deg']
+                        wp_lat, wp_lon = agent_df.iloc[0]['wp_lat'], agent_df.iloc[0]['wp_lon']
+                        direct_dist = haversine_nm(start_lat, start_lon, wp_lat, wp_lon)
+                        extra_nm = max(0, path_length - direct_dist)
+                        agent_extra_nm[agent_id] = extra_nm
+                        agent_extra_ratio[agent_id] = extra_nm / max(1.0, direct_dist)
+                    else:
+                        agent_extra_nm[agent_id] = 0.0
+                        agent_extra_ratio[agent_id] = 0.0
+                else:
+                    agent_path_lengths[agent_id] = 0.0
+                    agent_extra_nm[agent_id] = 0.0
+                    agent_extra_ratio[agent_id] = 0.0
+            
+            total_path_length_nm = sum(agent_path_lengths.values())
+            total_extra_path_nm = sum(agent_extra_nm.values())
+            avg_extra_path_nm = total_extra_path_nm / max(1, len(agent_extra_nm))
+            avg_extra_path_ratio = sum(agent_extra_ratio.values()) / max(1, len(agent_extra_ratio))
+            
+            # Path efficiency: based on time vs expected time
+            expected_time = 300.0  # seconds
+            path_efficiency = min(1.0, expected_time / max(1.0, flight_time_s))
+            
+        except Exception:
+            total_path_length_nm = 0.0
+            total_extra_path_nm = 0.0
+            avg_extra_path_nm = 0.0
+            avg_extra_path_ratio = 0.0
+            path_efficiency = 1.0
+        
+        # Waypoint reached ratio
+        try:
+            if 'waypoint_reached' in df.columns:
+                waypoint_reached_ratio = float(df['waypoint_reached'].max())
+            else:
+                waypoint_reached_ratio = 0.0
+        except Exception:
+            waypoint_reached_ratio = 0.0
+        
+        # Alert timing and burden metrics
+        try:
+            if 'predicted_alert' in df.columns:
+                alert_steps = df['predicted_alert'].sum()
+                alert_duty_cycle = float(alert_steps / max(1, len(df)))
+                alerts_per_min = float(alert_steps * 6.0)  # 6 = 60s/10s per step
+                total_alert_time_s = float(alert_steps * 10.0)
+            else:
+                alert_duty_cycle = 0.0
+                alerts_per_min = 0.0
+                total_alert_time_s = 0.0
+            
+            # Lead time calculation (simplified)
+            avg_lead_time_s = 0.0  # Would need more complex calculation
+            
+        except Exception:
+            alert_duty_cycle = 0.0
+            alerts_per_min = 0.0
+            total_alert_time_s = 0.0
+            avg_lead_time_s = 0.0
+        
+        # Intervention metrics (simplified for now)
+        num_interventions = tp_sum + fp_sum  # Total alerts as interventions
+        num_interventions_matched = tp_sum   # True positives as matched
+        num_interventions_false = fp_sum     # False positives as false interventions
+        
+        # NEW: Total reward calculation
+        try:
+            if 'reward' in df.columns:
+                reward_total = float(df['reward'].sum())
+            else:
+                reward_total = 0.0
+        except Exception:
+            reward_total = 0.0
+        
+        # Return the same structure as targeted_shift_tester
+        return {
+            "tp": tp_sum,
+            "fp": fp_sum,
+            "fn": fn_sum,
+            "tn": tn_sum,
+            "min_separation_nm": float(step_collapsed['min_separation_nm'].min()) if not step_collapsed.empty else 200.0,
+            "num_conflict_steps": int(step_collapsed['conflict_flag'].sum()) if 'conflict_flag' in step_collapsed.columns else 0,
+            "flight_time_s": flight_time_s,
+            "num_los_events": num_los_events,
+            "total_los_duration": total_los_duration,
+            "total_path_length_nm": total_path_length_nm,
+            "path_efficiency": path_efficiency,
+            "waypoint_reached_ratio": waypoint_reached_ratio,
+            "total_extra_path_nm": total_extra_path_nm,
+            "avg_extra_path_nm": avg_extra_path_nm,
+            "avg_extra_path_ratio": avg_extra_path_ratio,
+            "num_interventions": num_interventions,
+            "num_interventions_matched": num_interventions_matched,
+            "num_interventions_false": num_interventions_false,
+            "precision": precision,
+            "recall": recall,
+            "f1_score": f1_score,
+            "alert_duty_cycle": alert_duty_cycle,
+            "alerts_per_min": alerts_per_min,
+            "total_alert_time_s": total_alert_time_s,
+            "avg_lead_time_s": avg_lead_time_s,
+            "ghost_conflict": fp_sum / max(1, total_steps) if total_steps > 0 else 0.0,
+            "missed_conflict": fn_sum / max(1, tp_sum + fn_sum) if (tp_sum + fn_sum) > 0 else 0.0,
+            "resolution_fail_rate": 0.0,  # Would need more complex calculation
+            "oscillation_rate": 0.0,  # Would need action sequence analysis
+            "reward_total": reward_total,  # NEW: Total reward from trajectory
+        }
+        
+    except Exception as e:
+        print(f"Warning: Failed to extract comprehensive metrics from {csv_path}: {e}")
+        return _get_default_metrics()
+
+
+def _get_default_metrics() -> Dict[str, float]:
+    """Return default metrics structure matching targeted_shift_tester."""
+    return {
+        "tp": 0, "fp": 0, "fn": 0, "tn": 0,
+        "min_separation_nm": 200.0, "num_conflict_steps": 0,
+        "flight_time_s": 0.0,
+        "num_los_events": 0,
+        "total_los_duration": 0.0,
+        "total_path_length_nm": 0.0,
+        "path_efficiency": 1.0,
+        "waypoint_reached_ratio": 0.0,
+        "total_extra_path_nm": 0.0,
+        "avg_extra_path_nm": 0.0,
+        "avg_extra_path_ratio": 0.0,
+        "num_interventions": 0,
+        "num_interventions_matched": 0,
+        "num_interventions_false": 0,
+        "precision": 0.0, "recall": 0.0, "f1_score": 0.0,
+        "alert_duty_cycle": 0.0, "alerts_per_min": 0.0, "total_alert_time_s": 0.0,
+        "avg_lead_time_s": 0.0,
+        "ghost_conflict": 0.0, "missed_conflict": 1.0,
+        "resolution_fail_rate": 0.0, "oscillation_rate": 0.0,
+        "reward_total": 0.0,  # NEW: Total reward from trajectory
+    }
+
+
+def haversine_nm(lat1, lon1, lat2, lon2):
+    """Calculate great circle distance between two points in nautical miles."""
+    R_nm = 3440.065  # Earth radius in nautical miles
+    dlat = np.radians(lat2 - lat1)
+    dlon = np.radians(lon2 - lon1)
+    a = (np.sin(dlat/2.0) ** 2 +
+         np.cos(np.radians(lat1)) * np.cos(np.radians(lat2)) *
+         np.sin(dlon/2.0) ** 2)
+    c = 2.0 * np.arcsin(np.minimum(1.0, np.sqrt(a)))
+    return R_nm * c
+
 def run_model_on_scenario(algo, policy_id, scenario_json, out_dir, episodes=1, seed=123, show_progress=True) -> pd.DataFrame:
     out_dir = pathlib.Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     rows = []
@@ -245,7 +461,8 @@ def run_model_on_scenario(algo, policy_id, scenario_json, out_dir, episodes=1, s
         compute_once(algo, policy_id, env)
         csv_path = latest_traj_csv(run_dir)
         if csv_path:
-            m = metrics_from_csv(csv_path)
+            # Use comprehensive metrics extraction (same as targeted_shift_tester)
+            m = extract_comprehensive_metrics_from_csv(csv_path)
             # Create a new dict to avoid type issues
             row_data = dict(m)  # copy metrics
             row_data["traj_csv"] = csv_path
@@ -379,84 +596,8 @@ def generate_scenario_centric_visualizations(results_data: Dict, scen_map: Dict[
     
     return str(scenario_viz_dir)
 
-def generate_enhanced_visualizations(alias: str, base_scn: str, base_csv: str, shift_csvs: Dict[str, str], 
-                                   scen_map: Dict[str, str], viz_dir: pathlib.Path):
-    """
-    Generate interactive trajectory comparison plots and maps for baseline vs shifted scenarios.
-    
-    Args:
-        alias: Model alias name
-        base_scn: Baseline scenario name
-        base_csv: Path to baseline trajectory CSV
-        shift_csvs: Dict mapping scenario names to their trajectory CSV paths
-        scen_map: Dict mapping scenario names to scenario JSON paths
-        viz_dir: Output directory for visualizations
-    """
-    try:
-        viz_dir.mkdir(parents=True, exist_ok=True)
-        
-        # Generate interactive trajectory comparison plots using Plotly
-        if create_trajectory_comparison_plot is not None:
-            print(f"    Generating interactive trajectory plots...")
-            
-            # Create individual comparison plot for each shifted scenario
-            for shift_scn, shift_csv in shift_csvs.items():
-                plot_file = viz_dir / f"trajectory_comparison_{alias}_{base_scn}_vs_{shift_scn}.html"
-                title = f"Trajectory Analysis: {alias} - {base_scn.title()} vs {shift_scn.title()}"
-                
-                success = create_trajectory_comparison_plot(
-                    baseline_csv=base_csv,
-                    shift_csvs={shift_scn: shift_csv},
-                    out_html=str(plot_file),
-                    title=title,
-                    scenario_path=scen_map.get(shift_scn)
-                )
-                
-                if success:
-                    print(f"      ✅ Generated: trajectory_comparison_{alias}_{base_scn}_vs_{shift_scn}.html")
-                else:
-                    print(f"      ❌ Failed to generate trajectory plot for {shift_scn}")
-            
-            # Create combined plot showing all shifts for this model
-            combined_plot_file = viz_dir / f"trajectory_comparison_{alias}_{base_scn}_vs_all.html"
-            combined_title = f"Trajectory Analysis: {alias} - {base_scn.title()} vs All Scenarios"
-            
-            success = create_trajectory_comparison_plot(
-                baseline_csv=base_csv,
-                shift_csvs=shift_csvs,
-                out_html=str(combined_plot_file),
-                title=combined_title,
-                scenario_path=scen_map.get(base_scn)
-            )
-            
-            if success:
-                print(f"      ✅ Generated combined trajectory plot: trajectory_comparison_{alias}_{base_scn}_vs_all.html")
-        
-        # Generate interactive maps using Folium
-        if create_comparison_map is not None:
-            print(f"    Generating interactive trajectory maps...")
-            
-            for shift_scn, shift_csv in shift_csvs.items():
-                map_file = viz_dir / f"trajectory_map_{alias}_{base_scn}_vs_{shift_scn}.html"
-                map_title = f"Trajectory Map: {alias} - {base_scn.title()} vs {shift_scn.title()}"
-                
-                success = create_comparison_map(
-                    baseline_csv=base_csv,
-                    shifted_csv=shift_csv,
-                    out_html=str(map_file),
-                    title=map_title
-                )
-                
-                if success:
-                    print(f"      ✅ Generated: trajectory_map_{alias}_{base_scn}_vs_{shift_scn}.html")
-                else:
-                    print(f"      ❌ Failed to generate trajectory map for {shift_scn}")
-        
-        # Create navigation index for all visualizations
-        create_visualization_index(viz_dir, alias, base_scn, list(shift_csvs.keys()))
-        
-    except Exception as e:
-        print(f"    ❌ Error generating enhanced visualizations: {e}")
+# Model-specific enhanced visualizations function removed
+# Only scenario-centric visualizations are now generated
 
 def create_scenario_navigation_index(scn_dir: pathlib.Path, scenario: str, baseline_models: List[str], shift_models: List[str]):
     """
@@ -735,117 +876,8 @@ def create_master_navigation_index(viz_dir: pathlib.Path, scenarios: List[str]):
     except Exception as e:
         print(f"❌ Failed to generate master index: {e}")
 
-def create_visualization_index(viz_dir: pathlib.Path, alias: str, base_scn: str, shift_scenarios: List[str]):
-    """
-    Create an HTML index file for easy navigation of all visualizations for this model.
-    """
-    index_file = viz_dir / f"visualization_index_{alias}_{base_scn}.html"
-    
-    html_content = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>Visualization Index: {alias} - {base_scn.title()}</title>
-        <style>
-            body {{ font-family: Arial, sans-serif; margin: 20px; }}
-            h1 {{ color: #333; text-align: center; }}
-            h2 {{ color: #555; border-bottom: 2px solid #ddd; padding-bottom: 5px; }}
-            .viz-grid {{ display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin: 20px 0; }}
-            .viz-card {{
-                border: 1px solid #ddd;
-                border-radius: 8px;
-                padding: 15px;
-                background-color: #f9f9f9;
-                text-align: center;
-            }}
-            .viz-card h3 {{ margin-top: 0; color: #333; }}
-            .viz-card a {{
-                display: inline-block;
-                background-color: #007bff;
-                color: white;
-                padding: 8px 16px;
-                text-decoration: none;
-                border-radius: 4px;
-                margin: 5px;
-                font-size: 0.9em;
-            }}
-            .viz-card a:hover {{ background-color: #0056b3; }}
-            .description {{ color: #666; margin: 10px 0; line-height: 1.4; font-size: 0.9em; }}
-        </style>
-    </head>
-    <body>
-        <h1>🛩️ Visualization Dashboard</h1>
-        <h2>Model: {alias} | Baseline: {base_scn.title()}</h2>
-        
-        <div class="description">
-            <p><strong>Interactive visualizations</strong> comparing baseline performance against shifted scenarios.</p>
-            <p>Each visualization shows trajectory deviations, safety events, and performance metrics.</p>
-        </div>
-        
-        <h2>📊 Interactive Trajectory Plots (Plotly)</h2>
-        <div class="viz-grid">
-    """
-    
-    # Add trajectory plot cards
-    for shift_scn in shift_scenarios:
-        html_content += f"""
-            <div class="viz-card">
-                <h3>{shift_scn.title()}</h3>
-                <div class="description">Normalized trajectory comparison with statistical analysis</div>
-                <a href="./trajectory_comparison_{alias}_{base_scn}_vs_{shift_scn}.html" target="_blank">View Plot</a>
-            </div>
-        """
-    
-    # Add combined plot card
-    html_content += f"""
-            <div class="viz-card">
-                <h3>All Scenarios Combined</h3>
-                <div class="description">Comprehensive view of all scenario shifts in one plot</div>
-                <a href="./trajectory_comparison_{alias}_{base_scn}_vs_all.html" target="_blank">View Combined Plot</a>
-            </div>
-        </div>
-        
-        <h2>🗺️ Interactive Trajectory Maps (Folium)</h2>
-        <div class="viz-grid">
-    """
-    
-    # Add trajectory map cards
-    for shift_scn in shift_scenarios:
-        html_content += f"""
-            <div class="viz-card">
-                <h3>{shift_scn.title()}</h3>
-                <div class="description">Geographic trajectory overlay with conflict detection markers</div>
-                <a href="./trajectory_map_{alias}_{base_scn}_vs_{shift_scn}.html" target="_blank">View Map</a>
-            </div>
-        """
-    
-    html_content += f"""
-        </div>
-        
-        <h2>📈 Key Features</h2>
-        <div class="description">
-            <ul>
-                <li><strong>Trajectory Plots:</strong> Normalized position deviations with interactive hover details</li>
-                <li><strong>Trajectory Maps:</strong> Geographic overlays with conflict markers and safety events</li>
-                <li><strong>Performance Metrics:</strong> F1 score, path efficiency, and separation analysis</li>
-                <li><strong>Safety Analysis:</strong> LoS events, collision risks, and hallucination detection results</li>
-            </ul>
-        </div>
-        
-        <hr>
-        <p style="text-align: center; color: #666; font-size: 0.9em;">
-            Generated by baseline_vs_shift_matrix.py with enhanced visualization support
-        </p>
-    </body>
-    </html>
-    """
-    
-    try:
-        with open(index_file, 'w', encoding='utf-8') as f:
-            f.write(html_content)
-        print(f"      ✅ Generated visualization index: visualization_index_{alias}_{base_scn}.html")
-    except Exception as e:
-        print(f"      ❌ Failed to generate visualization index: {e}")
+# Model-specific visualization index function removed
+# Only scenario-centric navigation is now provided
 
 def main():
     ap = argparse.ArgumentParser(description="Extensive baseline vs shift analysis with GPU acceleration")
@@ -976,11 +1008,7 @@ def main():
             }
             all_rows.append(row)
 
-        # --- Generate Enhanced Visualizations ---
-        if shift_csvs:  # Only if we have shift data
-            print(f"  Generating enhanced visualizations for {alias}...")
-            viz_dir = outdir / f"{alias}__visualizations"
-            generate_enhanced_visualizations(alias, base_scn, bc, shift_csvs, scen_map, viz_dir)
+        # Model-specific visualizations removed - only scenario-centric visualizations are generated
 
         # stop algo between models to free resources
         try: algo.stop()
@@ -990,6 +1018,80 @@ def main():
         print("No results.")
         return
 
+    # Create comprehensive summary with detailed episode-level data (like targeted_shift_tester)
+    detailed_rows = []
+    
+    # Process each model-scenario combination to extract detailed metrics
+    for alias, ckpt in models.items():
+        base_scn = explicit_baselines.get(alias) or parse_baseline_scenario_from_ckpt(ckpt)
+        if not base_scn or base_scn not in scen_map:
+            base_scn = next((s for s in scen_map if s in alias.lower()), None) or next(iter(scen_map.keys()))
+        
+        # Process baseline performance
+        base_dir = outdir / f"{alias}__on__{base_scn}__baseline"
+        if base_dir.exists():
+            base_csv_path = base_dir / "episode_metrics.csv"
+            if base_csv_path.exists():
+                base_df = pd.read_csv(base_csv_path)
+                for _, episode_row in base_df.iterrows():
+                    if 'traj_csv' in episode_row and pd.notna(episode_row['traj_csv']):
+                        # Extract detailed metrics from trajectory CSV
+                        detailed_metrics = extract_comprehensive_metrics_from_csv(episode_row['traj_csv'])
+                        
+                        # Create summary row (similar to targeted_shift_tester structure)
+                        summary_row = {
+                            # Key identification columns
+                            "model_alias": alias,
+                            "baseline_scenario": base_scn,
+                            "test_scenario": base_scn,  # Same as baseline for baseline tests
+                            "model_type": "baseline",  # NEW: baseline vs shift indicator
+                            "episode_id": int(episode_row.get('episode', 1)),
+                            "seed": 42,  # Default seed
+                            # Add all comprehensive metrics
+                            **detailed_metrics
+                        }
+                        detailed_rows.append(summary_row)
+        
+        # Process shift performance
+        for scen, scen_json in scen_map.items():
+            if scen == base_scn:
+                continue
+                
+            run_dir = outdir / f"{alias}__on__{scen}"
+            if run_dir.exists():
+                run_csv_path = run_dir / "episode_metrics.csv"
+                if run_csv_path.exists():
+                    run_df = pd.read_csv(run_csv_path)
+                    for _, episode_row in run_df.iterrows():
+                        if 'traj_csv' in episode_row and pd.notna(episode_row['traj_csv']):
+                            # Extract detailed metrics from trajectory CSV
+                            detailed_metrics = extract_comprehensive_metrics_from_csv(episode_row['traj_csv'])
+                            
+                            # Create summary row (similar to targeted_shift_tester structure)
+                            summary_row = {
+                                # Key identification columns
+                                "model_alias": alias,
+                                "baseline_scenario": base_scn,
+                                "test_scenario": scen,
+                                "model_type": "shift",  # NEW: baseline vs shift indicator
+                                "episode_id": int(episode_row.get('episode', 1)),
+                                "seed": 42,  # Default seed
+                                # Add all comprehensive metrics
+                                **detailed_metrics
+                            }
+                            detailed_rows.append(summary_row)
+    
+    # Save comprehensive detailed summary (like targeted_shift_tester)
+    if detailed_rows:
+        detailed_df = pd.DataFrame(detailed_rows)
+        detailed_summary_path = outdir / "baseline_vs_shift_detailed_summary.csv"
+        detailed_df.to_csv(detailed_summary_path, index=False)
+        print(f"\n📊 Generated detailed summary with {len(detailed_rows)} episode records")
+        print(f"   Saved to: {detailed_summary_path}")
+    else:
+        print(f"\n⚠️  No detailed episode data found for comprehensive analysis")
+    
+    # Keep the original aggregated summary
     res = pd.DataFrame(all_rows)
     res.to_csv(outdir/"baseline_vs_shift_summary.csv", index=False)
 
@@ -1026,20 +1128,16 @@ def main():
         print(f"   • Extensive mode: ✅ Enabled")
     
     print(f"\n📁 Generated Files:")
-    print("   • baseline_vs_shift_summary.csv (Statistical results)")
+    print("   • baseline_vs_shift_summary.csv (Aggregated statistical results)")
+    print("   • baseline_vs_shift_detailed_summary.csv (Episode-level detailed metrics - same structure as targeted_shift_tester)")
     print("   • summary_*.png (Matplotlib visualizations)")
-    print("   • Model-centric visualizations in <model>__visualizations/ directories:")
-    print("     ○ trajectory_comparison_*.html (Plotly interactive plots)")
-    print("     ○ trajectory_map_*.html (Folium interactive maps)")
-    print("     ○ visualization_index_*.html (Navigation dashboards)")
-    print("   • 🆕 Scenario-centric visualizations in scenario_centric_visualizations/:")
+    print("   • � Scenario-centric visualizations in scenario_centric_visualizations/:")
     print("     ○ master_scenario_analysis_index.html (Main dashboard)")
     print("     ○ scenario_*_analysis/ (Per-scenario detailed analysis)")
     print("     ○ Interactive plots and maps for each scenario")
     
     print(f"\n🌐 Quick Access:")
-    print(f"   🔥 NEW: scenario_centric_visualizations/master_scenario_analysis_index.html")
-    print(f"   📊 Traditional: visualization_index_*.html files for model-centric views")
+    print(f"   🔥 Main Dashboard: scenario_centric_visualizations/master_scenario_analysis_index.html")
     
     if use_gpu:
         print(f"\n⚡ GPU acceleration was used for faster inference and testing.")

@@ -18,6 +18,10 @@ shift_analysis_*/
 targeted_shift_analysis_*/
 tests/
 *.zip
+scenarios_*/
+scenario_*/
+test_plots/
+
 
 # Temporary and Cache Files
 vis_temp/

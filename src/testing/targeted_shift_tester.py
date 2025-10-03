@@ -1081,7 +1081,13 @@ def run_targeted_shift_grid(repo_root: str,
                     
                     # Calculate episode-level metrics from step-collapsed data
                     total_steps = len(step_collapsed)
-                    episode_time_s = step_collapsed['sim_time_s'].max() if not step_collapsed.empty else 0.0
+                    # Calculate actual flight time as end_time - start_time
+                    if not step_collapsed.empty:
+                        start_time_s = step_collapsed['sim_time_s'].min()
+                        end_time_s = step_collapsed['sim_time_s'].max()
+                        episode_time_s = end_time_s - start_time_s
+                    else:
+                        episode_time_s = 0.0
                     
                     # Basic confusion matrix metrics (step-level aggregation)
                     tp_sum = int(step_collapsed['tp'].sum())
@@ -1284,11 +1290,33 @@ def run_targeted_shift_grid(repo_root: str,
                         total_path_length_nm = 0.0
                         path_efficiency = 1.0
                     
-                    # Waypoint reached ratio: from waypoint_reached column
+                    # FIXED: Waypoint reached ratio: ratio of agents that reached their waypoints
                     try:
-                        waypoint_reached_ratio = float(df['waypoint_reached'].mean()) if 'waypoint_reached' in df.columns else 0.0
+                        if 'waypoint_reached' in df.columns:
+                            # Get unique agents and check max waypoint_reached for each
+                            agents = df['agent_id'].unique()
+                            agents_reached = 0
+                            
+                            for agent in agents:
+                                agent_data = df[df['agent_id'] == agent]
+                                max_waypoint_reached = agent_data['waypoint_reached'].max()
+                                if max_waypoint_reached > 0:
+                                    agents_reached += 1
+                            
+                            waypoint_reached_ratio = float(agents_reached) / len(agents) if len(agents) > 0 else 0.0
+                        else:
+                            waypoint_reached_ratio = 0.0
                     except Exception:
                         waypoint_reached_ratio = 0.0
+                    
+                    # NEW: Total reward calculation
+                    try:
+                        if 'reward' in df.columns:
+                            reward_total = float(df['reward'].sum())
+                        else:
+                            reward_total = 0.0
+                    except Exception:
+                        reward_total = 0.0
                     
                     cm_summary = {
                         "tp": tp_sum,
@@ -1330,6 +1358,7 @@ def run_targeted_shift_grid(repo_root: str,
                         "missed_conflict": fn_sum / max(1, tp_sum + fn_sum) if (tp_sum + fn_sum) > 0 else 0.0,  # Missed conflict rate
                         "resolution_fail_rate": 0.0,  # Would need more complex calculation
                         "oscillation_rate": 0.0,  # Would need action sequence analysis
+                        "reward_total": reward_total,  # NEW: Total reward from trajectory
                     }
                 except Exception as e:
                     print(f"Warning: Failed to extract metrics from CSV {csv_path}: {e}")
@@ -1358,6 +1387,7 @@ def run_targeted_shift_grid(repo_root: str,
                         "avg_lead_time_s": 0.0,
                         "ghost_conflict": 0.0, "missed_conflict": 1.0,  # If no data, assume all conflicts missed
                         "resolution_fail_rate": 0.0, "oscillation_rate": 0.0,
+                        "reward_total": 0.0,  # NEW: Total reward from trajectory
                     }
             else:
                 # No CSV available - use default metrics with new fields
@@ -1385,6 +1415,7 @@ def run_targeted_shift_grid(repo_root: str,
                     "avg_lead_time_s": 0.0,
                     "ghost_conflict": 0.0, "missed_conflict": 1.0,  # If no CSV, assume all conflicts missed
                     "resolution_fail_rate": 0.0, "oscillation_rate": 0.0,
+                    "reward_total": 0.0,  # NEW: Total reward from trajectory
                 }
                 
             # Create summary row with proper column ordering (key identification columns first)

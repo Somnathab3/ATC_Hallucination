@@ -258,6 +258,7 @@ class HallucinationDetector:
         pos_seq = trajectory.get("positions", [])
         timestamps = trajectory.get("timestamps", [])
         waypoints = trajectory.get("waypoints", {})
+        waypoint_status = trajectory.get("waypoint_status", {})
         scenario_meta = trajectory.get("scenario_metadata", {})
         
         if not pos_seq or not timestamps:
@@ -272,18 +273,47 @@ class HallucinationDetector:
                 'avg_extra_path_ratio': 0.0
             }
         
+        # FIXED: Get all agents that appear in trajectory (not just first timestep)
+        all_agents = set()
+        for step in pos_seq:
+            all_agents.update(step.keys())
+        all_agents = list(all_agents)
+        
         # Calculate per-agent path metrics
         agent_path_lengths, agent_extra_nm, agent_extra_ratio = {}, {}, {}
         waypoints_reached = 0
-        total_agents = 0
+        total_agents = len(all_agents)
 
-        for aid in pos_seq[0].keys():
-            total_agents += 1
-            
+        for aid in all_agents:
             # Calculate actual flight path length
             pts = [step[aid] for step in pos_seq if aid in step]
             L = sum(haversine_nm(*pts[i-1], *pts[i]) for i in range(1, len(pts)))
             agent_path_lengths[aid] = L
+
+            # FIXED: Check waypoint completion from trajectory data
+            agent_reached_waypoint = False
+            
+            # Method 1: Check if we have CSV-style trajectory data with waypoint_reached column
+            csv_waypoint_completion = trajectory.get("csv_waypoint_completion", {})
+            if csv_waypoint_completion.get(aid) is not None:
+                # Use CSV waypoint completion data (preferred for CSV-based trajectories)
+                agent_reached_waypoint = csv_waypoint_completion[aid] > 0
+            elif waypoint_status.get(aid):
+                # Method 2: Use waypoint_status from trajectory metadata if available
+                final_timestep = len(pos_seq) - 1
+                agent_reached_waypoint = waypoint_status[aid].get(final_timestep, False)
+            elif waypoints.get(aid) and pts:
+                # Method 3: Fall back to distance-based detection (legacy method)
+                wlat, wlon = waypoints[aid]["lat"], waypoints[aid]["lon"]
+                final_lat, final_lon = pts[-1]
+                final_dist = haversine_nm(final_lat, final_lon, wlat, wlon)
+                agent_reached_waypoint = final_dist <= 1.0
+            elif len(timestamps) > 50:
+                # Method 4: Assume completion for reasonable flight duration (fallback)
+                agent_reached_waypoint = True
+            
+            if agent_reached_waypoint:
+                waypoints_reached += 1
 
             # Compare to direct path if waypoint is available
             if waypoints.get(aid) and pts:
@@ -292,19 +322,9 @@ class HallucinationDetector:
                 extra_nm = max(0.0, L - direct_nm)
                 agent_extra_nm[aid] = extra_nm
                 agent_extra_ratio[aid] = (L / max(1e-6, direct_nm)) - 1.0
-                
-                # Check waypoint completion (within 1 NM tolerance)
-                if len(pts) > 0:
-                    final_lat, final_lon = pts[-1]
-                    final_dist = haversine_nm(final_lat, final_lon, wlat, wlon)
-                    if final_dist <= 1.0:
-                        waypoints_reached += 1
             else:
                 agent_extra_nm[aid] = 0.0
                 agent_extra_ratio[aid] = 0.0
-                # Assume completion for reasonable flight duration
-                if len(timestamps) > 50:
-                    waypoints_reached += 1
 
         total_path_length = sum(agent_path_lengths.values())
         avg_path_length   = total_path_length / max(1, len(agent_path_lengths))
@@ -607,16 +627,36 @@ class HallucinationDetector:
         
         for g_idx, a_idx in matches:
             g_start, g_end = G[g_idx]
-            # Check resolution in window after conflict end
-            check_start = g_end
+            # FIXED: Check resolution in window after conflict end
+            check_start = g_end  
             check_end = min(T, g_end + window_steps)
             
-            if check_start < T:
-                min_hmd = self._min_hmd_window(pos_seq[check_start:check_end])
-                if min_hmd > d_sep_nm:
-                    tp_res += 1
+            # Handle edge case where conflict extends to trajectory end
+            if check_start >= T:
+                # Conflict extends to end - check if it was resolved in final steps
+                final_window_start = max(0, T - window_steps)
+                final_window = pos_seq[final_window_start:T]
+                if final_window:
+                    min_hmd = self._min_hmd_window(final_window)
+                    if min_hmd > d_sep_nm:
+                        tp_res += 1
+                    else:
+                        fn_res += 1
+            elif check_start < T and check_end > check_start:
+                # Normal case - check resolution window after conflict
+                resolution_window = pos_seq[check_start:check_end]
+                if resolution_window:
+                    min_hmd = self._min_hmd_window(resolution_window)
+                    if min_hmd > d_sep_nm:
+                        tp_res += 1
+                    else:
+                        fn_res += 1
                 else:
+                    # Empty resolution window - treat as unresolved
                     fn_res += 1
+            else:
+                # Invalid window - treat as unresolved  
+                fn_res += 1
         
         return {"tp_res": tp_res, "fn_res": fn_res}
 
@@ -666,6 +706,13 @@ class HallucinationDetector:
         # Get waypoint status from trajectory metadata if available
         waypoint_status = trajectory.get("waypoint_status", {})
         
+        # FIXED: Extract waypoint completion from CSV data if available
+        csv_waypoint_data = trajectory.get("csv_waypoint_data", None)
+        if csv_waypoint_data:
+            # Override efficiency calculation with CSV-based waypoint data
+            trajectory = trajectory.copy()  # Don't modify original
+            trajectory["csv_waypoint_completion"] = csv_waypoint_data
+        
         g, min_cpa, num_conflict_steps = self._ground_truth_series(trajectory, sep_nm, waypoint_status)
         a, alert_meta = self._alerts_from_actions(actions_seq, trajectory)
 
@@ -712,10 +759,38 @@ class HallucinationDetector:
         ghost = FP / max(1, FP + TN_steps) if (FP + TN_steps) > 0 else 0.0
         missed = FN / max(1, FN + TP) if (FN + TP) > 0 else 0.0
 
-        # Intervention counts and classic detection metrics
-        num_interventions_total   = len(A)
-        num_interventions_matched = len(used_A)      # = TP
-        num_interventions_false   = FP               # unmatched alerts
+        # FIXED: Intervention counts based on action threshold exceedances (not alert events)
+        # Count timesteps where any agent's action exceeds thresholds
+        num_interventions_total = 0
+        intervention_steps = []
+        
+        for t in range(T):
+            has_intervention = False
+            for aid, action in actions_seq[t].items():
+                action_arr = np.asarray(action).reshape(-1)
+                hdg_delta = abs(action_arr[0]) if len(action_arr) > 0 else 0.0
+                spd_delta = abs(action_arr[1]) if len(action_arr) > 1 else 0.0
+                
+                if hdg_delta >= self.theta_min_deg or spd_delta >= self.v_min_kt:
+                    has_intervention = True
+                    break
+            
+            if has_intervention:
+                num_interventions_total += 1
+                intervention_steps.append(t)
+        
+        # Count interventions that match TP/TN (correct interventions)
+        # Count interventions that are FP/FN (incorrect interventions)
+        num_interventions_matched = 0
+        num_interventions_false = 0
+        
+        for t in intervention_steps:
+            if g[t] and a[t]:  # TP - intervention during actual conflict
+                num_interventions_matched += 1
+            elif not g[t] and not a[t]:  # TN - no intervention when no conflict (shouldn't happen since we're in intervention_steps)
+                num_interventions_matched += 1
+            else:  # FP or FN - incorrect intervention
+                num_interventions_false += 1
 
         precision = TP / max(1, TP + FP)
         recall    = TP / max(1, TP + FN)
@@ -754,21 +829,28 @@ class HallucinationDetector:
         
         avg_lead_time = float(np.mean(lead_times)) if lead_times else 0.0
 
-        # Action oscillation: fraction of timesteps where heading command flips sign (per episode, max over agents)
-        flips = 0
-        prev_sign = None
+        # FIXED: Action oscillation based on max action value exceedances (not sign flips)
+        # Count timesteps where any agent's action exceeds maximum values
+        max_hdg_deg = 18.0  # Maximum reasonable heading change (degrees)
+        max_spd_kt = 10.0   # Maximum reasonable speed change (knots)
+        
+        oscillations = 0
         for t in range(T):
-            # Use average sign across agents at step t
-            sgns = []
+            has_extreme_action = False
             for aid, arr in actions_seq[t].items():
                 arr = np.asarray(arr).reshape(-1)
-                sgns.append(np.sign(arr[0]) if arr.size > 0 else 0.0)
-            s = np.sign(np.mean(sgns)) if sgns else 0.0
-            if prev_sign is not None and s * prev_sign < 0:
-                flips += 1
-            if s != 0:
-                prev_sign = s
-        oscillation_rate = flips / max(1, T-1)
+                hdg_delta = abs(arr[0]) if len(arr) > 0 else 0.0
+                spd_delta = abs(arr[1]) if len(arr) > 1 else 0.0
+                
+                # Check if either heading or speed change exceeds maximum values
+                if hdg_delta > max_hdg_deg or spd_delta > max_spd_kt:
+                    has_extreme_action = True
+                    break
+            
+            if has_extreme_action:
+                oscillations += 1
+                
+        oscillation_rate = oscillations / max(1, T)
 
         # Enhanced metrics
         los_metrics = self._detect_los_events(pos_seq)
