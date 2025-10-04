@@ -20,6 +20,8 @@ Usage examples:
     python atc_cli.py train --scenario head_on --algo PPO --timesteps 100000
     python atc_cli.py train --scenario all --timesteps 50000 --checkpoint-every 10000
     python atc_cli.py train --algo PPO --timesteps 2000000 --scenario canonical_crossing --log-trajectories
+    python atc_cli.py train --env-type generic --algo PPO --timesteps 1000000  # Dynamic conflict generation
+    python atc_cli.py train --env-type generic --scenario generic --algo SAC --timesteps 500000 --gpu
     
     # Run shift testing
     python atc_cli.py test-shifts --checkpoint latest --scenario parallel --episodes 5
@@ -35,6 +37,7 @@ Usage examples:
     
     # Full pipeline
     python atc_cli.py full-pipeline --scenario head_on --train-timesteps 50000 --test-episodes 3
+    python atc_cli.py full-pipeline --env-type generic --scenario generic --train-timesteps 100000
 """
 
 import os
@@ -113,8 +116,19 @@ class ATCController:
             return []
     
     def train_model(self, scenario_names: Union[str, List[str]], algo: str = "PPO", timesteps: int = 100000, 
-                   checkpoint_every: int = 10000, log_trajectories: bool = False, **kwargs) -> Optional[str]:
-        """Train a model on the specified scenario(s) and algorithm(s)."""
+                   checkpoint_every: int = 10000, log_trajectories: bool = False, 
+                   env_type: str = "frozen", **kwargs) -> Optional[str]:
+        """Train a model on the specified scenario(s) and algorithm(s).
+        
+        Args:
+            scenario_names: Scenario name(s) or "generic" for dynamic conflict generation
+            algo: Algorithm to use (PPO, SAC, IMPALA, CQL, APPO)
+            timesteps: Number of training timesteps
+            checkpoint_every: Checkpoint save frequency
+            log_trajectories: Enable detailed trajectory logging
+            env_type: Environment type ("frozen" for scenarios, "generic" for dynamic conflicts)
+            **kwargs: Additional training parameters
+        """
         try:
             from src.training.train_frozen_scenario import train_frozen
             
@@ -122,15 +136,21 @@ class ATCController:
             if isinstance(scenario_names, str):
                 scenario_names = [scenario_names]
             
-            # Handle 'all' scenarios
-            if any(s.lower() == "all" for s in scenario_names):
-                scenarios = self.list_scenarios()
-                if not scenarios:
-                    logger.warning("No scenarios found, generating all...")
-                    self.generate_scenarios(["all"])
-                    scenarios = self.list_scenarios()
+            # Handle generic training
+            if env_type == "generic":
+                # For generic training, use "generic" as scenario name
+                scenarios = ["generic"]
+                logger.info("Using generic environment for dynamic conflict generation")
             else:
-                scenarios = scenario_names
+                # Handle 'all' scenarios for frozen training
+                if any(s.lower() == "all" for s in scenario_names):
+                    scenarios = self.list_scenarios()
+                    if not scenarios:
+                        logger.warning("No scenarios found, generating all...")
+                        self.generate_scenarios(["all"])
+                        scenarios = self.list_scenarios()
+                else:
+                    scenarios = scenario_names
             
             # Handle 'all' algorithms
             if algo.lower() == "all":
@@ -145,11 +165,12 @@ class ATCController:
                 for current_scenario in scenarios:
                     logger.info(f"Training {current_algo} on scenario '{current_scenario}' for {timesteps:,} timesteps")
                     
-                    # Ensure scenario exists
-                    scenario_path = self.scenarios_dir / f"{current_scenario}.json"
-                    if not scenario_path.exists():
-                        logger.warning(f"Scenario {current_scenario} not found, generating...")
-                        self.generate_scenarios([current_scenario])
+                    # Ensure scenario exists (for frozen environments only)
+                    if env_type == "frozen":
+                        scenario_path = self.scenarios_dir / f"{current_scenario}.json"
+                        if not scenario_path.exists():
+                            logger.warning(f"Scenario {current_scenario} not found, generating...")
+                            self.generate_scenarios([current_scenario])
                     
                     checkpoint_path = train_frozen(
                         repo_root=str(self.repo_root),
@@ -158,6 +179,7 @@ class ATCController:
                         timesteps_total=timesteps,
                         checkpoint_every=checkpoint_every,
                         log_trajectories=log_trajectories,
+                        env_type=env_type,
                         **kwargs
                     )
                     
@@ -390,8 +412,19 @@ class ATCController:
     def full_pipeline(self, scenario_name: str, algo: str = "PPO", 
                      train_timesteps: int = 50000, test_episodes: int = 3,
                      targeted_shifts: bool = True, generate_viz: bool = True,
-                     log_trajectories: bool = False) -> Dict[str, Any]:
-        """Run the complete pipeline: scenario generation → training → testing → analysis."""
+                     log_trajectories: bool = False, env_type: str = "frozen") -> Dict[str, Any]:
+        """Run the complete pipeline: scenario generation → training → testing → analysis.
+        
+        Args:
+            scenario_name: Scenario name or "generic" for dynamic conflicts
+            algo: Algorithm to use
+            train_timesteps: Training timesteps
+            test_episodes: Testing episodes
+            targeted_shifts: Use targeted vs unison shifts
+            generate_viz: Generate visualizations
+            log_trajectories: Enable trajectory logging
+            env_type: Environment type ("frozen" or "generic")
+        """
         logger.info("🚀 Starting full pipeline execution")
         
         pipeline_results = {
@@ -402,16 +435,23 @@ class ATCController:
         }
         
         try:
-            # Step 1: Generate scenario
-            logger.info("📝 Step 1: Generating scenarios")
-            scenarios = self.generate_scenarios([scenario_name])
-            pipeline_results["steps"]["scenario_generation"] = {
-                "success": len(scenarios) > 0,
-                "generated": scenarios
-            }
-            
-            if not scenarios:
-                raise Exception("Scenario generation failed")
+            # Step 1: Generate scenario (skip for generic training)
+            if env_type == "frozen":
+                logger.info("📝 Step 1: Generating scenarios")
+                scenarios = self.generate_scenarios([scenario_name])
+                pipeline_results["steps"]["scenario_generation"] = {
+                    "success": len(scenarios) > 0,
+                    "generated": scenarios
+                }
+                
+                if not scenarios:
+                    raise Exception("Scenario generation failed")
+            else:
+                logger.info("📝 Step 1: Using generic environment (scenario generation skipped)")
+                pipeline_results["steps"]["scenario_generation"] = {
+                    "success": True,
+                    "generated": ["generic"]
+                }
             
             # Step 2: Train model
             logger.info("🎯 Step 2: Training model")
@@ -420,7 +460,8 @@ class ATCController:
                 algo=algo,
                 timesteps=train_timesteps,
                 checkpoint_every=max(1000, train_timesteps // 10),
-                log_trajectories=log_trajectories
+                log_trajectories=log_trajectories,
+                env_type=env_type
             )
             pipeline_results["steps"]["training"] = {
                 "success": checkpoint is not None,
@@ -708,6 +749,8 @@ def main():
                              help="Force CPU-only training")
     train_parser.add_argument("--log-trajectories", action="store_true",
                              help="Enable detailed trajectory logging (default: False for faster training)")
+    train_parser.add_argument("--env-type", choices=["frozen", "generic"], default="frozen",
+                             help="Environment type: 'frozen' for scenario-based, 'generic' for dynamic conflicts")
     
     # Shift testing
     test_parser = subparsers.add_parser("test-shifts", help="Run distribution shift testing")
@@ -760,6 +803,8 @@ def main():
                                  help="Skip visualization generation")
     pipeline_parser.add_argument("--log-trajectories", action="store_true",
                                  help="Enable detailed trajectory logging during training")
+    pipeline_parser.add_argument("--env-type", choices=["frozen", "generic"], default="frozen",
+                                 help="Environment type: 'frozen' for scenario-based, 'generic' for dynamic conflicts")
     
     # Baseline vs Shift Matrix testing
     matrix_parser = subparsers.add_parser("baseline-vs-shift-matrix", 
@@ -834,7 +879,8 @@ def main():
                 timesteps=args.timesteps,
                 checkpoint_every=checkpoint_every,
                 use_gpu=use_gpu,
-                log_trajectories=args.log_trajectories
+                log_trajectories=args.log_trajectories,
+                env_type=args.env_type
             )
             if checkpoint:
                 print(f"Training completed. Checkpoint: {checkpoint}")
@@ -920,7 +966,8 @@ def main():
                 test_episodes=args.test_episodes,
                 targeted_shifts=not args.no_targeted,
                 generate_viz=not args.no_viz,
-                log_trajectories=args.log_trajectories
+                log_trajectories=args.log_trajectories,
+                env_type=args.env_type
             )
             
             print("Pipeline Results:")

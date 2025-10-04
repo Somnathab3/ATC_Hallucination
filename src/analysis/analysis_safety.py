@@ -1,19 +1,11 @@
 """
-Safety Margin Analysis and Performance Metrics Module.
+Module Name: analysis_safety.py
+Description: Safety margin analysis and performance metrics for ATC system evaluation.
+Author: Som
+Date: 2025-10-04
 
-This module provides comprehensive safety analysis capabilities for air traffic control
-system evaluation, focusing on separation violations, conflict detection performance,
-and risk assessment metrics suitable for academic evaluation.
-
-Core Functionality:
-- Loss of Separation (LoS) Analysis: Time spent below safety thresholds
-- Closest Point of Approach (CPA) Statistics: Minimum separation calculations
-- Action Oscillation Detection: Policy stability and decision consistency analysis
-- Risk Assessment: Probabilistic safety evaluation with confidence intervals
-- Performance Degradation Analysis: Comparative safety assessment between conditions
-
-The module implements robust statistical methods including Wilson score confidence
-intervals and bootstrap resampling for publication-quality uncertainty quantification.
+Provides comprehensive safety analysis including separation violations, conflict detection
+performance, and risk assessment metrics suitable for academic evaluation.
 """
 
 import numpy as np
@@ -21,20 +13,17 @@ import pandas as pd
 import math
 from typing import Tuple, Optional
 
+
 def dwell_fraction(df, threshold_nm=5.0):
     """
-    Calculate fraction of episode time spent in Loss of Separation conditions.
-    
-    This metric quantifies safety performance by measuring the proportion of
-    time aircraft spend below the minimum separation threshold, providing
-    insight into conflict severity and duration.
+    Calculate fraction of time spent below separation threshold (Loss of Separation).
     
     Args:
-        df: DataFrame containing trajectory data with min_separation_nm column
+        df: DataFrame with min_separation_nm column
         threshold_nm: Minimum separation threshold in nautical miles
         
     Returns:
-        float: Fraction of timesteps below threshold (range 0.0-1.0)
+        float: Fraction of timesteps below threshold (0.0-1.0)
     """
     if 'min_separation_nm' not in df.columns or df.empty:
         return 0.0
@@ -63,17 +52,12 @@ def action_oscillation(df, agent_id):
     """
     Analyze agent action stability through oscillation pattern detection.
     
-    Oscillations indicate policy instability or conflicting objectives that
-    can degrade system performance and passenger comfort. This function
-    quantifies heading and speed command reversals as stability metrics.
-    
     Args:
-        df: DataFrame with trajectory data including action_hdg_delta_deg and
-            action_spd_delta_kt columns
-        agent_id: Target agent identifier for analysis
+        df: DataFrame with action_hdg_delta_deg and action_spd_delta_kt columns
+        agent_id: Target agent identifier
         
     Returns:
-        dict: Oscillation metrics including counts, rates, and total actions
+        dict: Oscillation metrics (counts, rates, total actions)
     """
     agent_data = df[df['agent_id'] == agent_id].sort_values('step_idx')
     

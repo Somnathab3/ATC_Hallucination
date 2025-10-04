@@ -1,15 +1,11 @@
 """
-Plotly-based trajectory comparison visualization for shift analysis.
+Module Name: trajectory_comparison_plot.py
+Description: Plotly-based trajectory comparison visualization for shift analysis.
+Author: Som
+Date: 2025-10-04
 
-This module creates interactive scatter plots showing trajectory patterns without geographic maps,
-making it easier to understand how parameter shifts affect aircraft movement patterns.
-
-Key features:
-- Shows trajectory deviations from baseline for each shift type
-- Color-codes shifts by type (speed, position, heading) and agent
-- Interactive plots with hover information and zoom capabilities
-- Batch processing for comparing multiple shift configurations
-- Statistical analysis of trajectory spread for each shift type
+Creates interactive scatter plots showing trajectory patterns and deviations from baseline,
+color-coded by shift type and agent with statistical analysis of trajectory spread.
 """
 
 import os
@@ -23,7 +19,19 @@ import json
 
 
 def _read_trajectory_data(csv_path: str) -> pd.DataFrame:
-    """Read trajectory CSV and prepare it for analysis."""
+    """
+    Read trajectory CSV and prepare for analysis.
+    
+    Args:
+        csv_path: Path to trajectory CSV file
+        
+    Returns:
+        pandas.DataFrame: Sorted trajectory data
+        
+    Raises:
+        FileNotFoundError: If CSV doesn't exist
+        ValueError: If required columns missing
+    """
     if not os.path.exists(csv_path):
         raise FileNotFoundError(f"Trajectory CSV not found: {csv_path}")
     
@@ -42,8 +50,14 @@ def _read_trajectory_data(csv_path: str) -> pd.DataFrame:
 
 def _normalize_trajectories(baseline_df: pd.DataFrame, shift_df: pd.DataFrame) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """
-    Normalize trajectories relative to baseline starting positions.
-    This makes it easier to see trajectory deviations.
+    Normalize trajectories relative to baseline starting positions for deviation analysis.
+    
+    Args:
+        baseline_df: Baseline trajectory DataFrame
+        shift_df: Shifted trajectory DataFrame
+        
+    Returns:
+        Tuple of (normalized_baseline, normalized_shift) DataFrames
     """
     # Get baseline starting positions for each agent
     baseline_starts = {}
@@ -78,7 +92,15 @@ def _normalize_trajectories(baseline_df: pd.DataFrame, shift_df: pd.DataFrame) -
 
 
 def _extract_shift_metadata(shift_name: str) -> Dict[str, str]:
-    """Extract shift type, agent, and magnitude from shift name."""
+    """
+    Extract shift type, agent, and magnitude from shift name.
+    
+    Args:
+        shift_name: Name like "speed_micro_A1_+5kt" or "aircraft_A1_B737"
+        
+    Returns:
+        dict: Contains 'type', 'agent', 'magnitude', 'range'
+    """
     # Parse shift names like "speed_micro_A1_+5kt", "aircraft_A1_B737", "waypoint_micro_A2_north_0.05deg"
     parts = shift_name.split('_')
     

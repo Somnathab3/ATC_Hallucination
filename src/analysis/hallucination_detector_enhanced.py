@@ -1,22 +1,11 @@
 """
-Enhanced Hallucination Detector for Air Traffic Control Systems.
+Module Name: hallucination_detector_enhanced.py
+Description: Real-time detection of conflict prediction errors (hallucinations) in MARL-based ATC systems.
+Author: Som
+Date: 2025-10-04
 
-This module provides real-time detection of conflict prediction errors (hallucinations) in
-MARL-based air traffic control systems. It compares ground truth conflict predictions based on
-TCPA/DCPA calculations against policy action patterns to identify false alerts and missed conflicts.
-
-Core Functionality:
-- Ground truth: Conflict detection using TCPA/DCPA thresholds with 5 NM separation
-- Prediction proxy: Alert detection from significant agent actions (heading/speed changes)
-- Intent-aware filtering: Ignores navigation-related actions toward waypoints
-- Threat-aware gating: Requires near-term threat presence for alert validation
-- IoU-based window matching: Robust event-level performance evaluation
-- Loss of Separation (LOS) tracking: Safety margin violation detection
-- Resolution assessment: Post-alert conflict resolution verification
-- Efficiency metrics: Path deviation and completion rate analysis
-
-The detector outputs comprehensive confusion matrices and performance metrics suitable
-for pandas analysis and academic reporting.
+Compares ground truth conflict predictions (TCPA/DCPA) against policy action patterns to identify
+false alerts and missed conflicts with intent-aware filtering and IoU-based window matching.
 """
 
 import math
@@ -25,7 +14,6 @@ from typing import Dict, Any, List, Tuple, Optional
 import numpy as np
 
 
-# --- helpers for intent- and threat-aware alerting ---
 def _bearing_deg(lat1, lon1, lat2, lon2):
     """Calculate initial bearing from point 1 to point 2 in degrees."""
     y = math.sin(math.radians(lon2 - lon1)) * math.cos(math.radians(lat2))
@@ -69,7 +57,7 @@ def _threat_for_agent(pos_t, hdg_t, spd_t, aid, horizon_s, los_nm):
         vj_e, vj_n = kt_to_nms(sj_kt) * ej, kt_to_nms(sj_kt) * nj
         tcpa, dcpa = compute_tcpa_dcpa_nm(lat_i, lon_i, vi_e, vi_n, lat_j, lon_j, vj_e, vj_n, horizon_s)
         
-        # Prioritize smallest DCPA, then smallest TCPA as tiebreaker
+        # Use smallest DCPA, then smallest TCPA as tiebreaker
         if dcpa < best[2] or (abs(dcpa - best[2]) < 1e-6 and tcpa < best[1]):
             best = (aj, tcpa, dcpa)
     
@@ -77,8 +65,8 @@ def _threat_for_agent(pos_t, hdg_t, spd_t, aid, horizon_s, los_nm):
 
 
 def haversine_nm(lat1, lon1, lat2, lon2):
-    """Calculate great circle distance between two points in nautical miles."""
-    R_nm = 3440.065  # Earth radius in nautical miles
+    """Calculate great circle distance in nautical miles."""
+    R_nm = 3440.065
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
     a = (math.sin(dlat/2.0) ** 2 +
@@ -122,7 +110,7 @@ def compute_tcpa_dcpa_nm(lat_i, lon_i, vi_east_nms, vi_north_nms,
     vx, vy = (vj_east_nms - vi_east_nms), (vj_north_nms - vi_north_nms)
     vv = vx*vx + vy*vy
     
-    # Handle case where relative velocity is negligible
+    # Handle negligible relative velocity
     if vv < 1e-12:
         return 0.0, math.hypot(rx, ry)
     
@@ -130,7 +118,7 @@ def compute_tcpa_dcpa_nm(lat_i, lon_i, vi_east_nms, vi_north_nms,
     tcpa = -(rx*vx + ry*vy) / vv
     tcpa = max(0.0, min(horizon_s, tcpa))
     
-    # Calculate DCPA at the constrained TCPA
+    # Calculate DCPA at constrained TCPA
     dcpa = math.hypot(rx + vx*tcpa, ry + vy*tcpa)
     return tcpa, dcpa
 

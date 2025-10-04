@@ -1,22 +1,11 @@
 """
-Interactive Temporal Analysis and Animation using Plotly.
+Module Name: viz_plotly.py
+Description: Interactive temporal analysis and animation using Plotly.
+Author: Som
+Date: 2025-10-04
 
-This module provides sophisticated interactive visualizations for temporal analysis
-of air traffic control system performance, featuring animated trajectories,
-multi-metric dashboards, and performance degradation analysis.
-
-Visualization Capabilities:
-- Time Series Analysis: Multi-trace KPI evolution with secondary axes
-- Animated Geographic Maps: Real-time trajectory playback with conflict overlay
-- Hallucination Dashboards: Comprehensive confusion matrix and performance analysis
-- Performance Degradation: Statistical analysis across shift magnitudes
-- Interactive Reports: HTML-based comprehensive analysis dashboards
-
-Technical Features:
-- Plotly-based: High-performance interactive visualization library
-- Animation Support: Smooth temporal playback with configurable timing
-- Multi-axis Plots: Complex metric relationships with proper scaling
-- Academic Quality: Publication-ready styling and export capabilities
+Provides interactive visualizations including time series analysis, animated trajectories,
+hallucination dashboards, and performance degradation analysis.
 """
 
 import pandas as pd
@@ -25,18 +14,14 @@ import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 
+
 def time_series_panel(df, title="Temporal KPIs"):
     """
     Generate multi-metric time series visualization with dual y-axes.
     
-    Creates comprehensive temporal analysis showing separation distances,
-    DCPA values, and alert states over time for all agents, with proper
-    scaling and safety threshold annotations.
-    
     Args:
-        df: DataFrame containing temporal data with sim_time_s, min_separation_nm,
-            predicted_alert, and agent-specific columns
-        title: Plot title for the visualization
+        df: DataFrame with sim_time_s, min_separation_nm, and agent columns
+        title: Plot title
         
     Returns:
         plotly.graph_objects.Figure: Interactive time series with hover data

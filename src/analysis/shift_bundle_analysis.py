@@ -1,28 +1,20 @@
 #!/usr/bin/env python3
 """
-Bundle-Based Shift Analysis for Model Performance Evaluation
+Module Name: shift_bundle_analysis.py
+Description: Bundle-based shift analysis for model performance evaluation with statistical confidence.
+Author: Som
+Date: 2025-10-04
 
-This module analyzes model performance on shifted environments by grouping
-shift types into meaningful bundles and computing key performance indicators
-with statistical confidence intervals.
-
-Bundle Categories:
-- KINEMATICS: agent dynamics (speed, heading)
-- GEOMETRY: start/route geometry (position_closer, position_lateral, waypoint)
-- AIRFRAME: plant/model mismatch (aircraft_type)
-- ENVIRONMENT: environmental conditions (wind, noise, turbulence)
-- CONTROL: timing and control variations (action_frequency)
+Analyzes model performance on shifted environments by grouping shift types into bundles:
+- KINEMATICS: speed, heading
+- GEOMETRY: position, waypoint
+- AIRFRAME: aircraft type
+- ENVIRONMENT: wind, noise, turbulence
+- CONTROL: action frequency
 
 Key Performance Indicators (KPIs):
-1. Episode LoS risk = 1 - S(5 NM) from survival curve
-2. LoS events/hour
-3. FN rate (missed conflicts)
-4. FP rate (false alerts)
-5. Interventions/hour OR alert duty cycle
-6. Flight time (min) OR extra-path ratio
-
-Usage:
-    python shift_bundle_analysis.py --data_dir "results" --scenarios "head_on,parallel,t_formation" --output "bundle_analysis"
+1. Episode LoS risk, 2. LoS events/hour, 3. FN rate, 4. FP rate,
+5. Interventions/hour, 6. Flight time
 """
 
 import pandas as pd
@@ -141,35 +133,26 @@ class ShiftBundleAnalyzer:
     def _calculate_kpis(self):
         """Calculate key performance indicators."""
         
-        # 1. Episode LoS risk = 1 - S(5 NM)
-        # For simplicity, use binary indicator: did episode have min_separation < 5 NM?
+        # Episode LoS risk (binary: min_separation < 5 NM)
         self.df['episode_los_risk'] = (self.df['min_separation_nm'] < 5.0).astype(float)
         
-        # 2. LoS events per hour
+        # LoS events per hour
         self.df['los_events_per_hour'] = self.df['num_los_events'] / (self.df['flight_time_s'] / 3600.0 + 1e-6)
         
-        # 3. FN rate (missed conflicts) - already in data as 'missed_conflict'
-        # (This is fn / (tp + fn))
+        # FN rate (missed conflicts) already in data as 'missed_conflict'
         
-        # 4. FP rate (false alerts) - compute as fp / (fp + tn)
+        # FP rate (false alerts)
         self.df['fp_rate'] = self.df['fp'] / (self.df['fp'] + self.df['tn'] + 1e-6)
         
-        # 5. Interventions per hour
+        # Interventions per hour
         self.df['interventions_per_hour'] = self.df['num_interventions'] / (self.df['flight_time_s'] / 3600.0 + 1e-6)
         
-        # 6. Flight time in minutes
+        # Flight time in minutes
         self.df['flight_time_min'] = self.df['flight_time_s'] / 60.0
         
-        # 7. Accuracy = (tp + tn) / (tp + fp + fn + tn)
+        # Accuracy
         total_predictions = self.df['tp'] + self.df['fp'] + self.df['fn'] + self.df['tn']
         self.df['accuracy'] = (self.df['tp'] + self.df['tn']) / (total_predictions + 1e-6)
-        
-        # 8. Precision = tp / (tp + fp) - already available in data
-        # 9. Recall = tp / (tp + fn) - already available in data  
-        # 10. F1-score - already available in data
-        
-        # Additional: Extra path ratio is already available as 'avg_extra_path_ratio'
-        # waypoint_reached_ratio, reward_total, min_separation_nm, num_interventions already in data
         
     def _calculate_baseline_stats(self):
         """Calculate baseline statistics for each scenario for comparison."""

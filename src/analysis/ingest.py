@@ -1,6 +1,8 @@
-# ingest.py
 """
-Data ingestion and harmonization pipeline for trajectory and hallucination data.
+Module Name: ingest.py
+Description: Data ingestion and harmonization pipeline for trajectory and hallucination data.
+Author: Som
+Date: 2025-10-04
 
 Handles loading and preprocessing of:
 - Per-episode trajectory CSVs

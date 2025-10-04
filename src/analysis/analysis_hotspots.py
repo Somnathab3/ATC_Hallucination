@@ -1,20 +1,11 @@
 """
-Spatial Hotspot Analysis for Conflict and Hallucination Events.
+Module Name: analysis_hotspots.py
+Description: Spatial hotspot analysis for conflict and hallucination events using DBSCAN clustering.
+Author: Som
+Date: 2025-10-04
 
-This module implements advanced spatial clustering techniques to identify geographic
-regions where conflicts and hallucination events concentrate, providing insights
-into airspace design and policy failure modes.
-
-Core Functionality:
-- DBSCAN Clustering: Density-based spatial clustering of event locations
-- Hallucination Hotspots: Geographic concentration of false positives and false negatives
-- Conflict Zone Identification: Areas with frequent Loss of Separation events
-- Statistical Analysis: Cluster characterization with geometric and temporal metrics
-
-Applications:
-- Identifying problematic airspace regions requiring design attention
-- Understanding geographic bias in conflict detection algorithms
-- Academic analysis of spatial patterns in safety-critical aviation systems
+Implements density-based spatial clustering to identify geographic regions with
+concentrated conflicts and hallucination events for airspace design insights.
 """
 
 import numpy as np
@@ -22,8 +13,18 @@ import pandas as pd
 from sklearn.cluster import DBSCAN
 from sklearn.preprocessing import StandardScaler
 
+
 def haversine_distance(lat1, lon1, lat2, lon2):
-    """Calculate haversine distance in nautical miles."""
+    """
+    Calculate haversine distance in nautical miles.
+    
+    Args:
+        lat1, lon1: First point coordinates in degrees
+        lat2, lon2: Second point coordinates in degrees
+        
+    Returns:
+        float: Distance in nautical miles
+    """
     R_nm = 3440.065  # Earth radius in nautical miles
     
     lat1, lon1, lat2, lon2 = map(np.radians, [lat1, lon1, lat2, lon2])
@@ -39,14 +40,10 @@ def cluster_fp_fn(df, kind="fp", eps_nm=3.0, min_samples=6):
     """
     Apply DBSCAN clustering to hallucination events by geographic location.
     
-    Uses density-based clustering to identify regions where hallucination events
-    (false positives, false negatives, etc.) concentrate, enabling identification
-    of systematic biases or problematic airspace regions.
-    
     Args:
-        df: DataFrame containing event data with lat_deg, lon_deg columns
-        kind: Event type to cluster ("fp", "fn", "tp", "tn")
-        eps_nm: Maximum distance between cluster members in nautical miles
+        df: DataFrame with lat_deg, lon_deg columns
+        kind: Event type ("fp", "fn", "tp", "tn")
+        eps_nm: Maximum distance between cluster members (nautical miles)
         min_samples: Minimum events required to form a cluster
         
     Returns:
@@ -62,8 +59,8 @@ def cluster_fp_fn(df, kind="fp", eps_nm=3.0, min_samples=6):
     # Extract coordinates
     coords = events[['lat_deg', 'lon_deg']].values
     
-    # Convert eps to approximate degrees (rough conversion)
-    eps_deg = eps_nm / 60.0  # 1 degree ≈ 60 nautical miles
+    # Convert eps to approximate degrees
+    eps_deg = eps_nm / 60.0  # 1 degree ≈ 60 NM
     
     # Perform DBSCAN clustering
     clustering = DBSCAN(eps=eps_deg, min_samples=min_samples, metric='haversine')

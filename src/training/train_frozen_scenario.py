@@ -1,29 +1,10 @@
 """
-Multi-Agent Reinforcement Learning Training for Air Traffic Control.
-
-This module provides comprehensive training capabilities for MARL collision avoidance
-policies using frozen scenario configurations. The training framework supports
-multiple state-of-the-art algorithms with optimized hyperparameters and early
-stopping based on conflict-free performance.
-
-Key Features:
-- Parameter sharing: Shared policy architecture across all agents for efficient learning
-- Multi-algorithm support: PPO, SAC, IMPALA, CQL, APPO with algorithm-specific tuning
-- Adaptive early stopping: Band-based performance evaluation prevents premature termination
-- GPU acceleration: Automatic detection and optimized configurations for CUDA devices
-- Progress tracking: Comprehensive logging of training metrics and trajectory analysis
-- Checkpoint management: Automatic saving of best-performing models during training
-
-Training Philosophy:
-The trainer uses a unified reward system that eliminates double-counting penalties through:
-- Signed progress rewards (positive for advancement, negative for backtracking)
-- Unified well-clear violation penalties (entry + severity-scaled step penalties)
-- Drift improvement shaping (rewards heading optimization, not absolute penalties)
-- Enhanced team-based potential-based reward shaping (PBRS) with 5 NM sensitivity
-Training continues until stable conflict-free performance is achieved or maximum timesteps are reached.
-
-The framework is designed for reproducible academic research with detailed logging
-and configurable hyperparameters for systematic ablation studies.
+Module Name: train_frozen_scenario.py
+Description: MARL training framework for air traffic collision avoidance using frozen scenarios.
+             Supports PPO, SAC, IMPALA, CQL, APPO with shared policy architecture, GPU acceleration,
+             unified reward system, and adaptive early stopping based on conflict-free performance.
+Author: Som
+Date: 2025-10-04
 """
 
 import os
@@ -54,6 +35,7 @@ if project_root not in sys.path:
 
 # Local imports (within repo)
 from src.environment.marl_collision_env_minimal import MARLCollisionEnv
+from src.environment.marl_collision_env_generic import MARLCollisionEnvGeneric
 
 
 LOGGER = logging.getLogger("train_frozen")
@@ -61,10 +43,10 @@ LOGGER.setLevel(logging.INFO)
 
 def check_gpu_availability():
     """
-    Detect and report available GPU resources for training acceleration.
+    Detect and report GPU resources.
     
     Returns:
-        bool: True if CUDA-compatible GPUs are available, False otherwise
+        bool: True if CUDA GPUs available.
     """
     if torch.cuda.is_available():
         gpu_count = torch.cuda.device_count()
@@ -75,19 +57,18 @@ def check_gpu_availability():
         print("No GPU detected, using CPU")
     return torch.cuda.is_available()
 
-# Initialize Ray with better configuration to reduce warnings
 def init_ray(use_gpu: bool = False):
     """
-    Initialize Ray distributed computing framework with optimized configuration.
+    Initialize Ray framework with optimized configuration.
     
     Args:
-        use_gpu: Whether to enable GPU support for training acceleration
+        use_gpu: Enable GPU support.
     """
     if not ray.is_initialized():
         init_kwargs = {
             "log_to_driver": False,
             "configure_logging": False,
-            "ignore_reinit_error": True,  # Allow reinit if needed
+            "ignore_reinit_error": True,
         }
         
         if use_gpu and torch.cuda.is_available():
@@ -112,7 +93,35 @@ def make_env(env_config: Dict[str, Any]):
     Returns:
         ParallelPettingZooEnv: Wrapped environment ready for RLlib training
     """
-    return ParallelPettingZooEnv(MARLCollisionEnv(env_config))
+    try:
+        env_type = env_config.get("env_type", "frozen")
+        
+        if env_type == "generic":
+            # For generic environment, preserve user's log_trajectories setting
+            # Only disable for multi-worker setups (when worker_index > 0)
+            worker_index = env_config.get("worker_index", 0)
+            is_evaluation = env_config.get("in_evaluation", False)
+            
+            generic_config = {
+                "enable_hallucination_detection": False,  # Disable for workers to avoid conflicts
+                **env_config
+            }
+            
+            # Only disable trajectory logging for worker environments (not main/evaluation)
+            if worker_index > 0 and not is_evaluation:
+                generic_config["log_trajectories"] = False
+                
+            return ParallelPettingZooEnv(MARLCollisionEnvGeneric(generic_config))
+        else:
+            # Ensure frozen environment has scenario_path
+            if "scenario_path" not in env_config:
+                raise ValueError(f"scenario_path must be provided for frozen environment. Config keys: {list(env_config.keys())}")
+            return ParallelPettingZooEnv(MARLCollisionEnv(env_config))
+            
+    except Exception as e:
+        print(f"Error creating environment: {e}")
+        print(f"Environment config: {env_config}")
+        raise
 
 
 def train_frozen(repo_root: str,
@@ -122,9 +131,10 @@ def train_frozen(repo_root: str,
                  timesteps_total: int = 2_000_000,
                  checkpoint_every: int = 100_000,
                  use_gpu: Optional[bool] = None,
-                 log_trajectories: bool = False) -> str:
+                 log_trajectories: bool = False,
+                 env_type: str = "frozen") -> str:
     """
-    Train multi-agent collision avoidance policy on frozen scenario.
+    Train multi-agent collision avoidance policy on frozen scenario or generic conflicts.
     
     This function orchestrates the complete training pipeline from environment
     setup through model checkpointing. Training continues until either stable
@@ -134,22 +144,27 @@ def train_frozen(repo_root: str,
         repo_root: Path to project root directory
         algo: RL algorithm to use (PPO, SAC, IMPALA, CQL, APPO)
         seed: Random seed for reproducible training
-        scenario_name: Name of scenario file (without .json extension)
+        scenario_name: Name of scenario file (without .json extension) or "generic" for dynamic conflicts
         timesteps_total: Maximum training timesteps before termination
         checkpoint_every: Frequency of checkpoint saves (currently unused)
         use_gpu: GPU usage preference (None=auto-detect, True=force, False=disable)
         log_trajectories: Enable detailed trajectory logging (default: False for speed)
+        env_type: Environment type ("frozen" for scenario-based, "generic" for dynamic conflicts)
         
     Returns:
         Path to final trained model checkpoint directory
         
     Raises:
-        FileNotFoundError: If specified scenario file doesn't exist
+        FileNotFoundError: If specified scenario file doesn't exist (frozen mode only)
         ValueError: If unsupported algorithm is specified
     """
-    scenario_path = os.path.join(repo_root, "scenarios", f"{scenario_name}.json")
-    if not os.path.exists(scenario_path):
-        raise FileNotFoundError(f"Scenario '{scenario_name}' not found at {scenario_path}. Available scenarios: head_on, t_formation, parallel, converging, canonical_crossing")
+    # Handle scenario path for frozen environments
+    if env_type == "frozen":
+        scenario_path = os.path.join(repo_root, "scenarios", f"{scenario_name}.json")
+        if not os.path.exists(scenario_path):
+            raise FileNotFoundError(f"Scenario '{scenario_name}' not found at {scenario_path}. Available scenarios: head_on, t_formation, parallel, converging, canonical_crossing")
+    else:
+        scenario_path = None  # Generic environment doesn't need scenario file
 
     # Check GPU availability and initialize Ray
     gpu_available = check_gpu_availability()
@@ -170,19 +185,23 @@ def train_frozen(repo_root: str,
 
     # Register env once
     env_name = "marl_collision_env_v0"
-    register_env(env_name, lambda cfg: ParallelPettingZooEnv(MARLCollisionEnv(cfg)))
+    register_env(env_name, make_env)
 
     # Setup timestamped results directory with algo and scenario info under ./training/
     import time
     timestamp = time.strftime("%Y%m%d_%H%M%S")
-    scenario_base_name = os.path.splitext(os.path.basename(scenario_path))[0]  # Extract scenario name without extension
+    if env_type == "frozen" and scenario_path:
+        scenario_base_name = os.path.splitext(os.path.basename(scenario_path))[0]  # Extract scenario name without extension
+    else:
+        scenario_base_name = f"generic_{scenario_name}" if scenario_name != "generic" else "generic"
+    
     training_dir = os.path.join(repo_root, "training")
     os.makedirs(training_dir, exist_ok=True)
     results_dir = os.path.join(training_dir, f"results_{algo}_{scenario_base_name}_{timestamp}")
     os.makedirs(results_dir, exist_ok=True)
 
     env_config = {
-        "scenario_path": scenario_path,
+        "env_type": env_type,
         "action_delay_steps": 0,
         "max_episode_steps": 100,
         "separation_nm": 5.0,
@@ -225,10 +244,39 @@ def train_frozen(repo_root: str,
         "action_cost_per_unit": -0.01,             # Cost for non-neutral actions
         "terminal_not_reached_penalty": -10.0,     # Penalty for episode termination without goal
     }
+    
+    # Add scenario path for frozen environments
+    if env_type == "frozen":
+        env_config["scenario_path"] = scenario_path
+    else:
+        # Generic environment specific parameters (improved based on single-agent RL methods)
+        env_config.update({
+            "max_aircraft": 4,
+            "min_aircraft": 2,
+            "conflict_probability": 0.8,
+            "scenario_complexity": "medium",  # low, medium, high
+            "airspace_size_nm": 50.0,
+            
+            # Improved conflict parameters based on horizontal_cr_env
+            "conflict_angles": [45, 90, 135, 180, 225, 270, 315],  # degrees, varied geometries
+            "conflict_angle_range": (45, 315),  # degrees range
+            "conflict_distances": [0.5, 1.0, 2.0, 3.0, 4.0, 5.0],  # NM, 0.5-5 NM range
+            "conflict_distance_range": (0.5, 5.0),  # NM
+            "time_to_conflict_range": (100, 1000),  # seconds (100-1000s as in horizontal_cr_env)
+            "altitude_tolerance_ft": 1000.0,  # ±1000 ft for horizontal conflicts only
+            
+            # Aircraft variety for better generalization
+            "aircraft_types": ["A320", "B737", "A330", "B747", "CRJ2"],
+        })
 
     # Shared policy (parameter-sharing) for all agents
     # Create a temporary env instance to get spaces, then delete it to avoid double BlueSky init
-    tmp_env = MARLCollisionEnv({**env_config, "log_trajectories": False})
+    temp_config = {**env_config, "log_trajectories": False, "enable_hallucination_detection": False}
+    
+    if env_type == "generic":
+        tmp_env = MARLCollisionEnvGeneric(temp_config)
+    else:
+        tmp_env = MARLCollisionEnv(temp_config)
     
     # Get the first agent ID from the scenario to use for space definition
     first_agent_id = tmp_env.possible_agents[0] if tmp_env.possible_agents else "A0"
@@ -755,11 +803,18 @@ if __name__ == "__main__":
     elif "SCENARIO" in os.environ:
         scenario_name = os.environ["SCENARIO"]
     
+    # Check for environment type from environment variable
+    env_type = os.environ.get("ENV_TYPE", "frozen").lower()
+    if env_type not in ["frozen", "generic"]:
+        env_type = "frozen"
+    
     # Check for GPU flag from environment
     use_gpu_env = os.environ.get("USE_GPU", "auto").lower()
     use_gpu = None if use_gpu_env == "auto" else use_gpu_env in ["true", "1", "yes"]
     
     print(f"Training with scenario: {scenario_name}")
+    print(f"Environment type: {env_type}")
     print(f"GPU mode: {use_gpu_env}")
-    ckpt = train_frozen(REPO, algo=os.environ.get("ALGO", "PPO"), scenario_name=scenario_name, use_gpu=use_gpu)
+    ckpt = train_frozen(REPO, algo=os.environ.get("ALGO", "PPO"), scenario_name=scenario_name, 
+                       use_gpu=use_gpu, env_type=env_type)
     print("Final checkpoint:", ckpt)

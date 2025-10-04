@@ -1,51 +1,559 @@
-# ATC Hallucination Project
+# ATC Hallucination Detection Project
 
-A comprehensive Multi-Agent Reinforcement Learning framework for air traffic collision avoidance with systematic robustness testing and hallucination detection capabilities.
+**Simulation and Quantification of ML-Based Hallucination Effects on Safety Margins in En Route Control**
 
-## Overview
+> Master's Thesis Project - Air Transport and Logistics  
+> Technical University Dresden  
+> Author: Somnath Panigrahi
 
-This project provides end-to-end capabilities for training, testing, and analyzing MARL collision avoidance policies. Key components include multi-algorithm training (PPO/SAC/IMPALA/CQL/APPO), targeted distribution shift testing, real-time hallucination detection, and comprehensive analysis/visualization packages.
+---
 
-**Core Features:**
-- **Training**: Multi-algorithm MARL training with shared policies and unified reward systems
-- **Testing**: Targeted shifts and baseline-vs-shift matrix evaluation for robustness assessment  
-- **Analysis**: Real-time and offline hallucination detection with TCPA/DCPA ground truth
-- **Scenarios**: Five standardized air traffic conflict scenarios with "FIXED" distances for convergence
-- **CLI**: Unified command-line interface for all operations with copy-pasteable examples
+## 🎯 Project Overview
 
-## Quick Start (CLI-first)
+This project investigates **hallucination phenomena** in Multi-Agent Reinforcement Learning (MARL) systems applied to air traffic collision avoidance. Hallucinations manifest as:
 
-Install dependencies:
+- **False Alerts (Ghost Conflicts)**: AI predicts conflicts that don't exist, causing unnecessary interventions
+- **Missed Conflicts (Invisible Threats)**: AI fails to detect actual collision risks, compromising safety
+
+Using BlueSky air traffic simulation and Ray/RLlib training infrastructure, we train cooperative collision avoidance policies and systematically test their robustness under distribution shifts. Real-time hallucination detection compares ground truth conflict predictions (TCPA/DCPA) against policy action patterns to quantify safety degradation.
+
+### Research Questions
+
+1. **How do distribution shifts affect hallucination rates in trained MARL policies?**
+2. **What is the relationship between false alerts and missed conflicts under operational stress?**
+3. **Can survival analysis quantify safety margin reliability across scenarios?**
+4. **Which shift categories (speed, position, aircraft type) cause the most severe degradation?**
+
+---
+
+## 📊 Methodology Overview
+
+![Methodology Flowchart](docs/methodology_overview.png)
+
+### Training Phase
+1. **Scenario Generator** creates standardized conflict geometries (head-on, parallel, converging, t-formation, canonical crossing)
+2. **BlueSky Environment** simulates realistic aircraft dynamics with 18-dimensional relative observations
+3. **MARL Training** uses PPO/SAC/IMPALA with shared policies and team-based reward shaping
+4. **Model Checkpointing** saves best-performing policies for evaluation
+
+### Testing Phase
+5. **Distribution Shifts** apply targeted perturbations (speed, position, heading, aircraft type, waypoint)
+6. **Baseline vs Shift Testing** compares performance on training scenario vs cross-scenario generalization
+7. **Hallucination Detection** identifies false alerts and missed conflicts in real-time
+8. **Survival Analysis** quantifies episode-level minimum separation reliability
+
+---
+
+## 🚀 Quick Start
+
+### Installation
+
 ```bash
-# Install PyTorch with CUDA support + RLlib + BlueSky
+# Clone repository
+git clone https://github.com/Somnathab3/ATC_Hallucination.git
+cd ATC_Hallucination
+
+# Install dependencies (Python 3.8-3.10 recommended)
+pip install -r requirements.txt
+
+# Install PyTorch with CUDA (optional, for GPU training)
 pip install torch>=2.0.0 torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-pip install ray[rllib] bluesky-simulator>=1.3.0 pandas numpy matplotlib pettingzoo gymnasium
 ```
 
-Generate scenarios → Train → Test → Analyze → Visualize:
+### Complete Pipeline Example
 
 ```bash
-# Generate all scenarios
+# 1. Generate conflict scenarios
 python atc_cli.py generate-scenarios --all
 
-# Train PPO on canonical crossing (50k timesteps)
-python atc_cli.py train --scenario canonical_crossing --algo PPO --timesteps 50000 --gpu
+# 2. Train MARL model (50k timesteps, ~30 min on GPU)
+python atc_cli.py train --scenario head_on --algo PPO --timesteps 50000 --gpu
 
-# Test robustness with targeted shifts (visualizations included)
-python atc_cli.py test-shifts --targeted --episodes 5 --viz
+# 3. Test robustness with distribution shifts (100 episodes per shift)
+python atc_cli.py test-shifts --targeted --episodes 100 --viz
 
-# Analyze results from latest run
-python atc_cli.py analyze
+# 4. Generate survival analysis and bundle reports
+python src/analysis/survival_curve_analysis.py --data_dir results_baseline_vs_shift --output survival_analysis
+python src/analysis/shift_bundle_analysis.py --data_dir results_baseline_vs_shift --output bundle_analysis
 
-# Full pipeline: scenario generation → training → testing → analysis
-python atc_cli.py full-pipeline --scenario head_on --train-timesteps 50000 --test-episodes 3
+# 5. View interactive visualizations
+# Open: results_baseline_vs_shift/scenario_centric_visualizations/master_scenario_analysis_index.html
+```
 
+### CLI Quick Reference
+
+```bash
 # List available resources
 python atc_cli.py list scenarios
 python atc_cli.py list checkpoints
+python atc_cli.py list results
+
+# Full end-to-end pipeline (single command)
+python atc_cli.py full-pipeline --scenario head_on --train-timesteps 50000 --test-episodes 100
 ```
 
-## Training (algorithms & hyperparameters)
+---
+
+## 📐 Scenario Visualizations
+
+Our five standardized scenarios create inevitable conflicts without intervention:
+
+### Initial Scenario Geometries
+
+<table>
+<tr>
+<td align="center"><b>Head-On</b><br><img src="scenarios/scenario_plots/head_on_radar.html" width="200"/><br>2 aircraft, reciprocal headings<br>18 NM approach distance</td>
+<td align="center"><b>T-Formation</b><br><img src="scenarios/scenario_plots/t_formation_radar.html" width="200"/><br>3 aircraft, perpendicular crossing<br>7.5 NM arm, 10 NM stem</td>
+<td align="center"><b>Parallel</b><br><img src="scenarios/scenario_plots/parallel_radar.html" width="200"/><br>3 aircraft, same direction<br>8 NM in-trail spacing</td>
+</tr>
+<tr>
+<td align="center"><b>Converging</b><br><img src="scenarios/scenario_plots/converging_radar.html" width="200"/><br>4 aircraft, clustered waypoints<br>12 NM radius placement</td>
+<td align="center"><b>Canonical Crossing</b><br><img src="scenarios/scenario_plots/canonical_crossing_radar.html" width="200"/><br>4 aircraft, orthogonal<br>12.5 NM radius, 4-way intersection</td>
+<td></td>
+</tr>
+</table>
+
+**Key Features:**
+- Centered at 52.0°N, 4.0°E (Netherlands airspace)
+- FL100 altitude, 250kt cruise speed
+- "FIXED" distances ensure episode convergence within 100 steps (1000 seconds)
+
+### Trained Policy Behavior
+
+Example collision avoidance trajectories after training:
+
+<table>
+<tr>
+<td><img src="episode_gifs/episode_001_20250929_110201_S65_WP4_C0.gif" width="250"/><br><i>Episode 1: Successful conflict resolution</i></td>
+<td><img src="episode_gifs/episode_002_20250929_110213_S72_WP4_C0.gif" width="250"/><br><i>Episode 2: Complex multi-agent coordination</i></td>
+<td><img src="episode_gifs/episode_003_20250929_110225_S64_WP4_C0.gif" width="250"/><br><i>Episode 3: Waypoint completion with safety</i></td>
+</tr>
+</table>
+
+---
+
+## 📈 Key Results: Inter-Scenario Reliability
+
+Our survival analysis reveals dramatic safety degradation when models face unfamiliar scenarios:
+
+<table>
+<tr>
+<td align="center"><b>Canonical Crossing Model</b><br><img src="survival_analysis/survival_curve_canonical_crossing.png" width="400"/></td>
+<td align="center"><b>Converging Model</b><br><img src="survival_analysis/survival_curve_converging.png" width="400"/></td>
+</tr>
+<tr>
+<td align="center"><b>Head-On Model</b><br><img src="survival_analysis/survival_curve_head_on.png" width="400"/></td>
+<td align="center"><b>Parallel Model</b><br><img src="survival_analysis/survival_curve_parallel.png" width="400"/></td>
+</tr>
+<tr>
+<td align="center"><b>T-Formation Model</b><br><img src="survival_analysis/survival_curve_t_formation.png" width="400"/></td>
+<td align="center"><b>Summary Statistics</b><br>(see survival_analysis/survival_curve_statistics.csv)</td>
+</tr>
+</table>
+
+### Statistical Summary
+
+| Model (Trained On) | Test Scenario | Mean Min Sep (NM) | LoS Risk (%) | Median Min Sep (NM) |
+|-------------------|---------------|-------------------|--------------|---------------------|
+| PPO_head_on | **head_on** (baseline) | **13.75** | 3.4% | **13.11** |
+| PPO_head_on | converging (shift) | 0.93 | **100.0%** | 0.74 |
+| PPO_parallel | **parallel** (baseline) | **7.88** | 0.0% | **7.97** |
+| PPO_parallel | converging (shift) | 1.03 | **100.0%** | 0.97 |
+| PPO_converging | **converging** (baseline) | **5.61** | 23.8% | **6.25** |
+| PPO_converging | canonical_crossing (shift) | 1.74 | **100.0%** | 1.53 |
+
+**Key Findings:**
+- ✅ **Baseline performance**: Models maintain 5+ NM separation on training scenarios
+- ⚠️ **Cross-scenario failure**: 50-100% LoS risk when tested on different geometries
+- 📉 **Generic model**: Trained on dynamic conflicts shows moderate performance across all scenarios
+- 🎯 **Trade-off confirmed**: Scenario-specific models excel at training task but fail to generalize
+
+*Full statistics: [survival_analysis/survival_curve_statistics.csv](survival_analysis/survival_curve_statistics.csv)*
+
+---
+
+## 🏗️ Project Architecture
+
+This project follows a modular design with specialized components for each phase of the research workflow:
+
+### Core Modules
+
+<table>
+<tr>
+<th>Module</th>
+<th>Purpose</th>
+<th>Key Components</th>
+<th>Documentation</th>
+</tr>
+<tr>
+<td><code>src/environment/</code></td>
+<td>MARL collision avoidance environment</td>
+<td>
+• BlueSky integration<br>
+• 18D relative observations<br>
+• Team-based PBRS rewards<br>
+• Real-time hallucination detection
+</td>
+<td><a href="src/environment/README.md">README</a></td>
+</tr>
+<tr>
+<td><code>src/scenarios/</code></td>
+<td>Standardized conflict generation</td>
+<td>
+• 5 geometric conflict types<br>
+• Parametric scenario builder<br>
+• Interactive visualizations<br>
+• JSON export
+</td>
+<td><a href="src/scenarios/README.md">README</a></td>
+</tr>
+<tr>
+<td><code>src/training/</code></td>
+<td>Multi-algorithm MARL training</td>
+<td>
+• PPO/SAC/IMPALA/CQL/APPO<br>
+• Shared policy architecture<br>
+• Checkpoint management<br>
+• Training progress tracking
+</td>
+<td><a href="src/training/README.md">README</a></td>
+</tr>
+<tr>
+<td><code>src/testing/</code></td>
+<td>Distribution shift robustness</td>
+<td>
+• Targeted agent shifts<br>
+• Baseline vs shift matrix<br>
+• 5 shift categories<br>
+• Automated test execution
+</td>
+<td><a href="src/testing/README.md">README</a></td>
+</tr>
+<tr>
+<td><code>src/analysis/</code></td>
+<td>Academic analysis & visualization</td>
+<td>
+• Hallucination detection<br>
+• Survival curve analysis<br>
+• Bundle performance metrics<br>
+• Interactive dashboards
+</td>
+<td><a href="src/analysis/README.md">✓ Existing</a></td>
+</tr>
+</table>
+
+### Data Flow
+
+```
+Scenarios (JSON) → Environment (BlueSky) → Training (Ray/RLlib) → Models (Checkpoints)
+                                                                         ↓
+Results (CSV/JSON) ← Analysis (Detection) ← Testing (Shifts) ← Models
+       ↓
+Visualizations (HTML/PNG) + Reports (CSV)
+```
+
+---
+
+## 🔬 Technical Details
+
+### Environment: Multi-Agent Observations
+
+Each agent receives **18-dimensional relative observations** (no raw lat/lon for generalization):
+
+**Navigation (6D):**
+- `wp_dist_norm`: Normalized distance to waypoint (tanh)
+- `cos_to_wp`, `sin_to_wp`: Direction to waypoint (unit circle)
+- `airspeed`: Normalized speed around 150 m/s
+- `progress_rate`: Waypoint approach rate
+- `safety_rate`: Minimum separation change rate
+
+**Neighbor Awareness (12D = 3 neighbors × 4 features):**
+- `x_r`, `y_r`: Relative positions of top-3 nearest neighbors
+- `vx_r`, `vy_r`: Relative velocities
+
+**Action Space (2D continuous):**
+- Heading change: ±18° per 10-second step
+- Speed change: ±10 kt per step
+
+*Full specification: [src/environment/README.md](src/environment/README.md)*
+
+### Reward System: Team-Based PBRS
+
+Unified reward components (no double-counting):
+
+$$R_{total} = R_{progress} + R_{violations} + R_{drift} + R_{team} + R_{action} + R_{time}$$
+
+**Key components:**
+- **Signed progress**: ±0.04 per km toward/away from waypoint
+- **Well-clear violations**: Entry penalty (-25) + depth-scaled step penalties (-1.0×)
+- **Drift improvement**: +0.01 per degree of heading optimization
+- **Team PBRS**: Shared potential function with 5 NM neighbor sensitivity (weight=0.6)
+- **Action costs**: -0.01 per non-neutral control input
+- **Time penalty**: -0.0005 per second for efficiency
+
+*Detailed formulas: [src/environment/README.md](src/environment/README.md)*
+
+### Hallucination Detection: TCPA/DCPA vs Action Patterns
+
+**Ground Truth (Physics-Based):**
+$$TCPA = \frac{-(\Delta x \cdot \Delta v_x + \Delta y \cdot \Delta v_y)}{|\Delta v|^2}$$
+$$DCPA = \sqrt{(\Delta x + \Delta v_x \cdot TCPA)^2 + (\Delta y + \Delta v_y \cdot TCPA)^2}$$
+- Conflict flagged if: TCPA ∈ [0, 120s] AND DCPA < 5 NM
+
+**Policy Prediction (Behavior-Based):**
+- Alert detection: |Δheading| > 3° OR |Δspeed| > 5 kt
+- Intent-aware filtering: Ignore actions toward waypoint
+- Threat-aware gating: Require near-term intruder presence
+
+**IoU-Based Event Matching:**
+$$IoU = \frac{|T_{GT} \cap T_{Pred}|}{|T_{GT} \cup T_{Pred}|}$$
+- Windows matched if IoU ≥ 0.3
+- Metrics: Precision, Recall, F1 (event-level, not step-level)
+
+*Implementation: [src/analysis/README.md](src/analysis/README.md)*
+
+---
+
+## 📚 Usage Guides
+
+### 1. Training a New Model
+
+```bash
+# Train on single scenario (recommended starting point)
+python atc_cli.py train --scenario head_on --algo PPO --timesteps 100000 --gpu
+
+# Train on all scenarios sequentially
+python atc_cli.py train --scenario all --algo PPO --timesteps 50000
+
+# Algorithm comparison (PPO vs SAC)
+python atc_cli.py train --scenario converging --algo SAC --timesteps 100000 --gpu
+```
+
+**Output:** `models/PPO_head_on_YYYYMMDD_HHMMSS/` with checkpoints and training logs
+
+*Detailed guide: [src/training/README.md](src/training/README.md)*
+
+### 2. Running Distribution Shift Tests
+
+```bash
+# Targeted shifts (individual agent modifications)
+python atc_cli.py test-shifts --targeted --episodes 100 --viz
+
+# Baseline vs shift matrix (cross-scenario evaluation)
+python -m src.testing.baseline_vs_shift_matrix \
+  --models-dir models \
+  --scenarios-dir scenarios \
+  --episodes 100 \
+  --use-gpu
+```
+
+**Output:** `results_baseline_vs_shift/` with episode CSVs, metrics, and interactive visualizations
+
+*Detailed guide: [src/testing/README.md](src/testing/README.md)*
+
+### 3. Generating Analysis Reports
+
+```bash
+# Survival curves (reliability analysis)
+python src/analysis/survival_curve_analysis.py \
+  --data_dir results_baseline_vs_shift \
+  --output survival_analysis
+
+# Bundle analysis (grouped shift evaluation)
+python src/analysis/shift_bundle_analysis.py \
+  --data_dir results_baseline_vs_shift \
+  --output bundle_analysis
+```
+
+**Output:** PNG plots, CSV statistics, and HTML dashboards
+
+*Detailed guide: [src/analysis/README.md](src/analysis/README.md)*
+
+---
+
+## 🔧 Development Resources
+
+### Configuration Files
+
+- `requirements.txt`: Python dependencies
+- `setup.py`: Package installation
+- `.github/copilot-instructions.md`: AI assistant project context
+- `atc_cli.py`: Unified command-line interface
+
+### Directory Structure
+
+```
+ATC_Hallucination/
+├── src/                          # Source code modules
+│   ├── environment/              # MARL environment (BlueSky wrapper)
+│   ├── scenarios/                # Conflict scenario generation
+│   ├── training/                 # Multi-algorithm training
+│   ├── testing/                  # Distribution shift testing
+│   └── analysis/                 # Hallucination detection & visualization
+├── scenarios/                    # Generated scenario JSON files
+│   └── scenario_plots/           # Interactive HTML radar plots
+├── models/                       # Trained model checkpoints
+├── results/                      # Test execution outputs
+├── survival_analysis/            # Reliability analysis results
+├── episode_gifs/                 # Training trajectory animations
+├── atc_cli.py                   # Main CLI entry point
+├── train.py                     # Legacy training script
+└── README.md                    # This file
+```
+
+### Extending the Project
+
+**Adding New Scenarios:**
+See [src/scenarios/README.md](src/scenarios/README.md) for scenario generation API
+
+**Adding New Reward Components:**
+See [src/environment/README.md](src/environment/README.md) for reward system architecture
+
+**Adding New Analysis Metrics:**
+See [src/analysis/README.md](src/analysis/README.md) for hallucination detector extension
+
+**Adding New RL Algorithms:**
+See [src/training/README.md](src/training/README.md) for RLlib integration patterns
+
+---
+
+## 📖 Academic Context
+
+This project supports research on:
+
+### 1. Distribution Shift Robustness in Safety-Critical AI
+- **Research Question**: How do operational variations affect learned safety policies?
+- **Approach**: Targeted single-agent shifts isolate failure modes
+- **Metrics**: LoS risk, false alert rate, missed conflict rate
+
+### 2. Hallucination Detection Methodologies
+- **Research Question**: Can we detect conflict prediction errors in real-time?
+- **Approach**: Compare ground truth (TCPA/DCPA) vs behavioral proxy (actions)
+- **Metrics**: Precision, Recall, F1 (event-level with IoU matching)
+
+### 3. Multi-Agent Coordination Under Stress
+- **Research Question**: Does team-based reward shaping maintain coordination under distribution shift?
+- **Approach**: PBRS with shared potential function and neighbor sensitivity
+- **Metrics**: Team reward contribution, pairwise separation maintenance
+
+### 4. Safety Margin Reliability Analysis
+- **Research Question**: What is the probability distribution of minimum separation?
+- **Approach**: Survival analysis on episode-level minimum separation
+- **Metrics**: Survival curves, percentile statistics, LoS risk rates
+
+---
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+**1. BlueSky initialization errors**
+```bash
+# Only one BlueSky instance per process - restart Python if needed
+# Environment handles automatic initialization and cleanup
+```
+
+**2. Ray worker failures on Windows**
+```python
+# If Ray fails to spawn workers, use driver-only mode:
+env_config = {"num_rollout_workers": 0}
+```
+
+**3. Environment observation space mismatches**
+```python
+# Ensure test environment matches training configuration:
+env_config = {
+    "neighbor_topk": 3,              # Must match training
+    "collision_nm": 3.0,             # Must match training
+    "team_coordination_weight": 0.2, # Must match training
+}
+```
+
+**4. Checkpoint restoration issues**
+```python
+# Use Algorithm.from_checkpoint() with correct policy ID:
+from ray.rllib.algorithms.ppo import PPO
+algo = PPO.from_checkpoint("models/PPO_head_on_20250928/")
+policy = algo.get_policy("shared_policy")  # Note: "shared_policy" is the correct ID
+```
+
+**5. Missing visualization files**
+```bash
+# Check that hallucination detection is enabled:
+env_config = {"enable_hallucination_detection": True}
+
+# Verify trajectory CSV generation:
+ls results/PPO_*/ep_*/traj_*.csv
+```
+
+### Performance Optimization
+
+- **GPU Training**: Use `--gpu` flag for 3-5× speedup
+- **Parallel Workers**: Increase `num_rollout_workers` for faster sampling (4-8 on multi-core CPUs)
+- **Episode Count**: Use 100+ episodes for statistical validity in analysis
+- **Checkpoint Frequency**: Save every 10k-20k timesteps to balance storage vs granularity
+
+---
+
+## 📝 Citation
+
+If you use this project in your research, please cite:
+
+```bibtex
+@mastersthesis{panigrahi2025atc_hallucination,
+  title={Simulation and Quantification of ML-Based Hallucination Effects on Safety Margins in En Route Control},
+  author={Panigrahi, Somnath},
+  year={2025},
+  school={Technical University Dresden},
+  department={Air Transport and Logistics}
+}
+```
+
+---
+
+## 📄 License
+
+This project is released under the MIT License. See [LICENSE](LICENSE) for details.
+
+---
+
+## 🤝 Contributing
+
+Contributions welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+
+### Development Workflow
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes with appropriate tests
+4. Update relevant README files in `src/` subfolders
+5. Commit with descriptive messages (`git commit -m 'Add amazing feature'`)
+6. Push to your branch (`git push origin feature/amazing-feature`)
+7. Open a Pull Request
+
+---
+
+## 📞 Contact
+
+**Somnath Panigrahi**  
+Master's Student - Air Transport and Logistics  
+Technical University Dresden
+
+**Project Repository:** [https://github.com/Somnathab3/ATC_Hallucination](https://github.com/Somnathab3/ATC_Hallucination)
+
+---
+
+## 🙏 Acknowledgments
+
+- **BlueSky**: Open-source air traffic simulator (TU Delft)
+- **Ray/RLlib**: Scalable reinforcement learning framework (Anyscale)
+- **PettingZoo**: Multi-agent environment standardization (Farama Foundation)
+- **Technical University Dresden**: Academic supervision and resources
+
+---
+
+**Last Updated:** October 2025  
+**Project Status:** Active Development (Thesis Completion Q1 2025)
 
 **Supported algorithms:** PPO, SAC, IMPALA, CQL, APPO
 

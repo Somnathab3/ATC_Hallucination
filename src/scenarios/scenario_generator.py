@@ -1,21 +1,10 @@
-
 """
-Air Traffic Control Scenario Generator.
-
-This module generates standardized aircraft conflict scenarios for MARL training and evaluation.
-All scenarios are centered around a common airspace location with systematic aircraft placement
-to create reproducible conflict geometries.
-
-Scenario Types:
-- Head-on: Two aircraft approaching each other on reciprocal headings
-- T-formation: Perpendicular crossing with multiple aircraft
-- Parallel: In-trail separation challenges with same-direction traffic
-- Converging: Multiple aircraft targeting nearby waypoints
-- Canonical crossing: Four-way intersection with orthogonal traffic flows
-
-Each scenario includes initial positions, headings, speeds, and waypoint assignments
-designed to create inevitable conflicts without intervention, testing the collision
-avoidance capabilities of trained policies.
+Module Name: scenario_generator.py
+Description: Generates standardized aircraft conflict scenarios for MARL training and evaluation.
+             Creates head-on, T-formation, parallel, converging, and canonical crossing geometries
+             with reproducible conflict configurations centered at common airspace location.
+Author: Som
+Date: 2025-10-04
 """
 
 import os
@@ -23,22 +12,21 @@ import json
 import math
 from typing import Dict, Any, List
 
-# Scenario generation constants (Netherlands airspace reference)
-CENTER_LAT = 52.0      # Latitude center for all scenarios
-CENTER_LON = 4.0       # Longitude center for all scenarios  
-ALT_FT = 10000.0       # Standard flight level (FL100)
-SPD_KT = 250.0         # Standard cruise speed (knots)
+CENTER_LAT = 52.0
+CENTER_LON = 4.0
+ALT_FT = 10000.0
+SPD_KT = 250.0
 
 def nm_to_lat(nm: float) -> float:
     """Convert nautical miles to latitude degrees (1° ≈ 60 NM)."""
     return nm / 60.0
 
 def nm_to_lon(nm: float, at_lat_deg: float) -> float:
-    """Convert nautical miles to longitude degrees, accounting for latitude convergence."""
+    """Convert nautical miles to longitude degrees at given latitude."""
     return nm / (60.0 * max(1e-6, math.cos(math.radians(at_lat_deg))))
 
 def pos_offset(lat0: float, lon0: float, north_nm: float, east_nm: float):
-    """Calculate new position given base coordinates and north/east offsets in NM."""
+    """Calculate position from base coordinates and north/east offsets (NM)."""
     return (lat0 + nm_to_lat(north_nm), lon0 + nm_to_lon(east_nm, lat0))
 
 def save(name: str, agents: List[Dict[str, Any]], notes: str) -> str:
@@ -46,19 +34,19 @@ def save(name: str, agents: List[Dict[str, Any]], notes: str) -> str:
     Save scenario configuration to JSON file.
     
     Args:
-        name: Scenario name (used as filename)
-        agents: List of agent configuration dictionaries
-        notes: Description of scenario purpose and conflict geometry
+        name: Scenario name (filename).
+        agents: List of agent configurations.
+        notes: Scenario description.
         
     Returns:
-        Path to saved scenario file
+        Path to saved JSON file.
     """
     scenario_config = {
         "scenario_name": name,
-        "seed": 42,  # Deterministic seed for reproducibility
+        "seed": 42,
         "notes": notes,
         "center": {"lat": CENTER_LAT, "lon": CENTER_LON, "alt_ft": ALT_FT},
-        "sim_dt_s": 1.0,  # BlueSky timestep
+        "sim_dt_s": 1.0,
         "agents": agents,
     }
     
@@ -70,13 +58,13 @@ def save(name: str, agents: List[Dict[str, Any]], notes: str) -> str:
 
 def make_head_on(approach_nm: float = 18.0) -> str:
     """
-    Generate head-on encounter scenario with two aircraft on reciprocal headings.
+    Generate head-on encounter with two aircraft on reciprocal headings.
     
     Args:
-        approach_nm: Initial separation distance from center point
+        approach_nm: Initial separation from center.
         
     Returns:
-        Path to generated scenario file
+        Path to generated scenario file.
     """
     # Position aircraft north and south of center, flying toward each other
     a1_lat, a1_lon = pos_offset(CENTER_LAT, CENTER_LON, -approach_nm, 0.0)

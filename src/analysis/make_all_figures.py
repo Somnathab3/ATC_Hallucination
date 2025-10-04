@@ -1,25 +1,11 @@
 """
-Master Orchestration Script for Comprehensive Analysis Figure Generation.
+Module Name: make_all_figures.py
+Description: Master orchestration script for comprehensive analysis figure generation.
+Author: Som
+Date: 2025-10-04
 
-This module serves as the central coordination point for generating complete sets
-of academic-quality visualizations and analysis artifacts from ATC hallucination
-detection research data. Designed for thesis and publication preparation.
-
-Orchestration Capabilities:
-- Complete Dataset Loading: Harmonized trajectory and hallucination data integration
-- Multi-Modal Visualization: Geographic maps, interactive plots, and static figures
-- Publication Quality: High-resolution outputs suitable for academic journals
-- Comprehensive Analysis: Statistical evaluation, hotspot detection, and safety metrics
-- Organized Output: Structured directory hierarchy with navigation-ready HTML reports
-
-Academic Applications:
-- Thesis Chapter Generation: Complete figure sets with consistent styling
-- Conference Presentations: Interactive dashboards and animated visualizations
-- Journal Publications: High-resolution static figures with statistical analysis
-- Technical Reports: Comprehensive analysis with supporting data exports
-
-The script implements a modular architecture allowing selective generation of
-visualization types while maintaining consistency across all output formats.
+Central coordination for generating complete sets of academic-quality visualizations
+from ATC hallucination detection research data for thesis and publication preparation.
 """
 
 import os
@@ -29,7 +15,7 @@ import json
 from datetime import datetime
 from pathlib import Path
 
-# Add project root to path for imports
+# Add project root to path
 project_root = Path(__file__).parent.parent
 sys.path.insert(0, str(project_root))
 

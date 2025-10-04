@@ -1,26 +1,10 @@
 """
-Targeted Distribution Shift Testing Framework.
-
-This module implements systematic robustness testing for MARL collision avoidance policies
-by applying targeted perturbations to individual agents while keeping others at baseline.
-This approach identifies single points of failure and tests model generalization beyond
-the training distribution.
-
-Testing Philosophy:
-- Individual agent modification: Only one agent per test case is modified
-- Micro to macro ranges: Small perturbations to large deviations from training envelope  
-- Conflict-inducing design: Modifications intentionally increase collision probability
-- Comprehensive analysis: Statistical evaluation across shift types and magnitudes
-
-Shift Categories:
-- Speed variations: ±5-30 kt from nominal cruise speed
-- Position shifts: Lateral and proximity modifications (0.05-0.4 degrees)
-- Heading deviations: ±5-30 degrees from optimal trajectory
-- Aircraft type variations: Different performance characteristics
-- Waypoint modifications: Destination changes affecting traffic flow
-
-The framework generates rich trajectory data with real-time hallucination detection,
-enabling detailed analysis of policy robustness and failure modes for academic evaluation.
+Module Name: targeted_shift_tester.py
+Description: Targeted distribution shift testing framework for MARL robustness evaluation.
+             Applies systematic perturbations to individual agents to identify failure modes
+             and test generalization beyond training distribution.
+Author: Som
+Date: 2025-10-04
 """
 
 import os
@@ -734,7 +718,15 @@ def make_env(env_config: Dict[str, Any]):
             
             env_config["scenario_path"] = os.path.abspath(env_config["scenario_path"])
     
-    return ParallelPettingZooEnv(MARLCollisionEnv(env_config))
+    # Determine which environment to use based on presence of scenario_path
+    if "scenario_path" in env_config and env_config["scenario_path"]:
+        # Use frozen scenario environment
+        return ParallelPettingZooEnv(MARLCollisionEnv(env_config))
+    else:
+        # Use generic environment (for generic models testing on frozen scenarios)
+        # Import here to avoid circular dependency
+        from src.environment.marl_collision_env_generic import MARLCollisionEnvGeneric
+        return ParallelPettingZooEnv(MARLCollisionEnvGeneric(env_config))
 
 
 def run_targeted_shift_grid(repo_root: str,

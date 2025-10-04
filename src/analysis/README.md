@@ -1,251 +1,499 @@
-# ATC Hallucination Analysis Visualization Package
+# ATC Hallucination Analysis Package
 
-This comprehensive visualization package provides end-to-end analysis capabilities for aircraft collision avoidance systems and hallucination detection research.
+Comprehensive analysis and visualization tools for aircraft collision avoidance systems with real-time hallucination detection. This package supports academic research in multi-agent reinforcement learning (MARL) safety assessment and distribution shift robustness testing.
 
 ## Overview
 
-The package includes:
+### Core Functionality (Actively Used)
 
-- **Geographic visualization** with folium-based interactive maps
-- **Temporal analysis** with plotly interactive plots
-- **Publication-quality figures** using matplotlib  
-- **Hotspot clustering** and similarity analysis
-- **Safety margin statistics** and performance metrics
-- **Data ingestion pipeline** for harmonizing results
-- **Complete orchestration** for thesis figure generation
+1. **Real-Time Hallucination Detection** (`hallucination_detector_enhanced.py`)
+   - Ground truth conflict prediction via TCPA/DCPA calculations
+   - Policy action pattern analysis for alert detection
+   - Intent-aware and threat-aware filtering
+   - IoU-based event matching for robust performance evaluation
+
+2. **Survival Curve Analysis** (`survival_curve_analysis.py`)
+   - Episode-level minimum separation reliability curves
+   - Statistical analysis of safety margins across scenarios
+   - Support for frozen scenario-specific and generic models
+   - Publication-ready visualization with bootstrap confidence intervals
+
+3. **Shift Bundle Analysis** (`shift_bundle_analysis.py`)
+   - Grouped shift evaluation (kinematics, geometry, environment)
+   - Comprehensive KPI calculations with statistical confidence
+   - Cross-scenario robustness assessment
+
+4. **Trajectory Comparison Visualization**
+   - Interactive Plotly plots (`trajectory_comparison_plot.py`)
+   - Geographic Folium maps (`trajectory_comparison_map.py`)
+   - Automatic integration via `viz_hooks.py`
+
+### Utility Modules (Available for Advanced Use)
+
+- **Base visualization modules**: `viz_geographic.py`, `viz_plotly.py`, `viz_matplotlib.py`
+- **Analysis utilities**: `analysis_hotspots.py`, `analysis_similarity.py`, `analysis_safety.py`
+- **Data harmonization**: `ingest.py`
+- **Batch orchestration**: `make_all_figures.py` (legacy standalone tool)
 
 ## Installation
 
-Install required dependencies:
+All required dependencies are included in the main project `requirements.txt`:
 
 ```bash
 pip install -r requirements.txt
 ```
 
-Key dependencies:
+Key analysis dependencies:
 - `folium>=0.14.0` - Interactive geographic maps
 - `plotly>=5.15.0` - Interactive temporal plots
-- `matplotlib>=3.6.0` - Publication figures
-- `scikit-learn>=1.2.0` - Clustering analysis
+- `matplotlib>=3.6.0` - Publication-ready figures
+- `scipy>=1.9.0` - Statistical analysis and bootstrap
 - `pandas>=1.5.0` - Data processing
+- `numpy>=1.23.0` - Numerical computations
 
 ## Quick Start
 
-### Generate All Figures (Recommended)
+### Current Testing Workflow (Recommended)
 
-Run the complete analysis pipeline:
+The analysis tools are integrated into the testing pipeline:
 
 ```bash
-python analysis/make_all_figures.py --results-dir results
+# Step 1: Run baseline vs shift matrix analysis
+python -m src.testing.baseline_vs_shift_matrix \
+  --models-dir models \
+  --scenarios-dir scenarios \
+  --episodes 100 \
+  --use-gpu
+
+# Step 2: Generate survival curves (includes generic model)
+python src/analysis/survival_curve_analysis.py \
+  --data_dir results_baseline_vs_shift \
+  --output survival_analysis
+
+# Step 3: Run bundle analysis for grouped shift evaluation
+python src/analysis/shift_bundle_analysis.py \
+  --data_dir results_baseline_vs_shift \
+  --output bundle_analysis
 ```
 
-This creates:
-- Geographic maps with trajectory overlays and safety analysis
-- Interactive temporal analysis plots
-- Publication-quality static figures  
-- Comprehensive analysis reports
+### Automatic Visualization
 
-### Individual Components
+Trajectory comparison maps and plots are generated automatically during testing via `viz_hooks.py`.
 
-#### Geographic Maps
-```python
-from analysis.viz_geographic import build_map
-import pandas as pd
+### Standalone Analysis Tools
 
-# Load trajectory data
-baseline_df = pd.read_csv("results/trajectory_baseline.csv")
-shifted_df = pd.read_csv("results/trajectory_shifted.csv")
+#### 1. Survival Curve Analysis
+```bash
+# Analyze minimum separation reliability across scenarios
+python src/analysis/survival_curve_analysis.py \
+  --data_dir results_baseline_vs_shift \
+  --output survival_plots
 
-# Generate interactive map
-build_map(baseline_df, shifted_df, "comparison_map.html")
+# With confidence intervals (slower)
+python src/analysis/survival_curve_analysis.py \
+  --data_dir results_baseline_vs_shift \
+  --output survival_plots_ci
+
+# Single scenario
+python src/analysis/survival_curve_analysis.py \
+  --data_dir results_baseline_vs_shift \
+  --scenario head_on \
+  --output survival_head_on
 ```
 
-#### Interactive Plots
-```python
-from analysis.viz_plotly import time_series_panel, animated_geo
+#### 2. Bundle Analysis
+```bash
+# Comprehensive shift bundle analysis
+python src/analysis/shift_bundle_analysis.py \
+  --data_dir results_baseline_vs_shift \
+  --output bundle_analysis \
+  --scenarios "head_on,parallel,t_formation"
 
-# Time series analysis
-fig = time_series_panel(shifted_df, "KPI Analysis")
-fig.write_html("time_series.html")
-
-# Animated trajectories
-anim_fig = animated_geo(shifted_df, "Aircraft Animation")
-anim_fig.write_html("animation.html")
+# Compact output (minimal plots)
+python src/analysis/shift_bundle_analysis.py \
+  --data_dir results_baseline_vs_shift \
+  --output bundle_compact \
+  --compact
 ```
 
-#### Publication Figures
+#### 3. Direct Visualization Module Usage (Advanced)
 ```python
-from analysis.viz_matplotlib import create_publication_figure_set
+# Geographic map generation
+from src.analysis.trajectory_comparison_map import create_comparison_map
 
-# Generate complete figure set
-figures = create_publication_figure_set(summary_df, trajectory_df, "figures/")
-```
+create_comparison_map(
+    baseline_csv="baseline_trajectory.csv",
+    shifted_csv="shifted_trajectory.csv",
+    out_html="comparison.html",
+    sep_nm=5.0
+)
 
-#### Data Loading
-```python
-from analysis.ingest import load_complete_dataset
+# Interactive Plotly dashboard
+from src.analysis.trajectory_comparison_plot import create_shift_analysis_dashboard
 
-# Load and harmonize all data
-dataset = load_complete_dataset("results/")
-trajectories = dataset['trajectories']
-summary = dataset['summary']
+create_shift_analysis_dashboard(
+    baseline_csv="baseline_trajectory.csv",
+    shifted_csv="shifted_trajectory.csv",
+    out_html="dashboard.html"
+)
 ```
 
 ## Data Format Requirements
 
-### Trajectory Data
-Expected columns:
+### Trajectory CSV (Generated by `MARLCollisionEnv`)
+Automatically generated with comprehensive columns:
+
+**Spatial/Temporal:**
+- `episode_id`, `step_idx`, `sim_time_s`
 - `agent_id`: Aircraft identifier (A0, A1, A2, A3)
-- `step_idx`: Simulation step number
-- `sim_time_s`: Simulation time in seconds
-- `lat_deg`, `lon_deg`: Position in degrees
-- `hdg_deg`: Heading in degrees
-- `tas_kt`: True airspeed in knots
-- `min_separation_nm`: Minimum separation distance
-- `conflict_flag`: 1 if conflict detected, 0 otherwise
-- `predicted_alert`: 1 if alert predicted, 0 otherwise
+- `lat_deg`, `lon_deg`, `alt_ft`: Position
+- `hdg_deg`, `tas_kt`, `cas_kt`: Aircraft state
 
-### Hallucination Data
-Expected columns:
-- `fp`, `fn`, `tp`, `tn`: False positive, false negative, true positive, true negative flags
-- `episode_id`: Episode identifier
-- Matching temporal/spatial keys for merging
+**Actions & Rewards:**
+- `action_hdg_delta_deg`, `action_spd_delta_kt`: Applied actions
+- `reward_*`: Detailed reward breakdown (progress, violations, drift, etc.)
 
-### Summary Data
-Expected columns:
-- `shift_magnitude`: Magnitude of input shift
-- `shift_type`: Type of shift (heading, speed, position)
-- `scenario`: Scenario name (parallel, head_on, converging)
-- Performance metrics: `fn_rate`, `fp_rate`, `resolution_failure_rate`
+**Safety Metrics:**
+- `min_separation_nm`: Minimum pairwise separation
+- `conflict_flag`, `collision_flag`: Safety indicators
+- `dist_to_A0_nm`, `dist_to_A1_nm`, etc.: Pairwise distances
+
+**Hallucination Detection:**
+- `gt_conflict`: Ground truth conflict (TCPA/DCPA-based)
+- `predicted_alert`: Detected alert from action patterns
+- `tp`, `fp`, `fn`, `tn`: Confusion matrix flags per timestep
+
+**Waypoint Status:**
+- `wp_dist_nm`: Distance to waypoint
+- `waypoint_reached`, `waypoint_hits`: Completion tracking
+
+### Episode Metrics CSV
+Aggregated statistics per episode:
+- `f1_score`, `precision`, `recall`: Detection accuracy
+- `min_separation_nm`: Episode minimum separation
+- `num_los_events`: Count of separation violations
+- `path_efficiency`: Direct distance / actual path length
+- `flight_time_s`: Episode duration
+
+### Baseline vs Shift Summary CSV
+Model generalization analysis:
+- `model_alias`: Model identifier (PPO_scenario or PPO_generic_timestamp)
+- `baseline_scenario`: Scenario model was trained on
+- `test_scenario`: Scenario model is tested on
+- `model_type`: `frozen`, `generic`, `baseline`, or `shift`
+- Performance deltas: `f1_vs_baseline_pct`, `minsep_vs_baseline_pct`, etc.
 
 ## Output Structure
 
+### Automatic Testing Output (baseline_vs_shift_matrix.py)
 ```
-figures_output_YYYYMMDD_HHMMSS/
-├── geographic_maps/           # Interactive folium maps
-│   ├── overview_trajectories.html
-│   ├── scenario_*.html
-│   ├── baseline_vs_shifted.html
-│   └── conflict_hotspots.html
-├── interactive_plots/         # Plotly interactive figures
-│   ├── time_series_kpi.html
-│   ├── animated_trajectories.html
-│   ├── hallucination_dashboard.html
-│   └── comprehensive_report.html
-├── publication_figures/       # High-quality static figures
-│   ├── degradation_fn_rate.png
-│   ├── agent_vulnerability.png
-│   ├── confusion_evolution.png
-│   ├── oscillation_patterns.png
-│   └── safety_margins.png
-├── analysis_results/          # Analysis outputs
-│   ├── hotspot_analysis.json
-│   ├── conflict_zones.json
-│   ├── safety_metrics.csv
-│   └── trajectory_similarity.json
-├── processed_data/            # Harmonized datasets
-│   ├── trajectories_harmonized.csv
-│   ├── summary_harmonized.csv
-│   └── metadata.json
-└── reports/                   # Summary reports
-    └── analysis_summary.html
+results_baseline_vs_shift/
+├── baseline_vs_shift_summary.csv              # Aggregated model performance
+├── baseline_vs_shift_detailed_summary.csv     # Episode-level data
+├── PPO_model__on__scenario__[baseline|shift]/ # Per model-scenario test
+│   ├── episode_metrics.csv                    # Episode statistics
+│   ├── minsep.png                             # Min separation plot
+│   ├── overlay.png                            # Trajectory overlay
+│   └── ep_001/, ep_002/, ...                  # Episode directories
+│       └── traj_ep_XXXX.csv                   # Full trajectory data
+└── scenario_centric_visualizations/           # Interactive analysis
+    ├── master_scenario_analysis_index.html
+    └── scenario_*_analysis/
+        ├── scenario_*_index.html
+        ├── scenario_*_all_models_comparison.html
+        └── scenario_*_*_vs_*_map.html
+```
+
+### Survival Analysis Output
+```
+survival_analysis/
+├── survival_curve_canonical_crossing.png
+├── survival_curve_converging.png
+├── survival_curve_head_on.png
+├── survival_curve_parallel.png
+├── survival_curve_t_formation.png
+└── survival_curve_statistics.csv              # Statistical summary
+```
+
+### Bundle Analysis Output
+```
+bundle_analysis/
+├── bundle_kinematics/
+│   ├── los_risk_boxplot.png
+│   ├── fn_rate_boxplot.png
+│   ├── kpi_heatmap.png
+│   └── kpi_stats.csv
+├── bundle_geometry/
+├── bundle_environment/
+└── bundle_summary.csv                          # Cross-bundle comparison
 ```
 
 ## Key Features
 
-### Geographic Visualizations
-- **Trajectory overlays**: Baseline vs shifted trajectories with agent-specific colors
-- **Safety circles**: 5 NM safety zones around aircraft positions
-- **Conflict heatmaps**: Heat maps of Loss of Separation events
-- **Hallucination markers**: FP/FN/TP markers with color coding
-- **Time animations**: TimestampedGeoJson with time slider control
-- **Hotspot analysis**: Clustering of problematic locations
+### 1. Real-Time Hallucination Detection
+**Integrated into environment during training/testing**
+- Ground truth via TCPA/DCPA with 5 NM separation threshold
+- Alert detection from action magnitude (3° heading, 5 kt speed thresholds)
+- Intent-aware filtering (ignores navigation toward waypoints)
+- Threat-aware gating (requires near-term threat for validation)
+- IoU-based window matching for robust event-level evaluation
+- Per-timestep and episode-level confusion matrices
 
-### Interactive Analysis
-- **Time series panels**: Min separation, DCPA, alert states over time
-- **Animated maps**: Aircraft movement with interactive controls
-- **Performance dashboards**: Hallucination metrics and confusion matrices
-- **Degradation curves**: Performance vs shift magnitude with confidence intervals
+### 2. Survival Curve Analysis
+**Reliability assessment across scenarios**
+- Empirical survival function: S(x) = Pr(X ≥ x) where X = episode minimum separation
+- Bootstrap confidence intervals (90% default)
+- Support for frozen (scenario-specific) and generic models
+- Visual distinction: baseline (*), generic (G), shift (--) line styles
+- Episode-level LoS risk: Pr(X < 5 NM)
+- Percentile statistics (p5, p10, p25, p50, p75, p90, p95)
 
-### Publication Figures
-- **Bootstrap confidence intervals**: Statistically robust uncertainty quantification
-- **Agent vulnerability matrices**: Heatmaps showing agent-specific performance
-- **Confusion matrix evolution**: How detection accuracy changes with shifts
-- **Safety margin distributions**: Statistical analysis of separation distances
-- **Action oscillation patterns**: Behavioral stability analysis
+### 3. Bundle Analysis
+**Grouped shift evaluation with statistical rigor**
+- Bundle categories: KINEMATICS, GEOMETRY, AIRFRAME, ENVIRONMENT, CONTROL
+- Key performance indicators (KPIs):
+  - Episode LoS risk from survival curves
+  - LoS events per hour
+  - FN rate (missed conflicts) and FP rate (false alerts)
+  - Alert duty cycle / interventions per hour
+  - Flight time and path efficiency
+- Bootstrap confidence intervals for all metrics
+- Cross-bundle and cross-scenario comparison
 
-### Analysis Components
-- **Hotspot clustering**: DBSCAN clustering of FP/FN events
-- **Trajectory similarity**: DTW-based trajectory comparison
-- **Safety statistics**: Comprehensive safety margin analysis
-- **Performance degradation**: Baseline vs shifted comparison
+### 4. Interactive Trajectory Visualization
+**Automatic generation during testing**
+- Plotly scatter plots showing trajectory deviations
+- Folium geographic maps with:
+  - Baseline vs shift trajectory overlays
+  - 5 NM safety circles
+  - Conflict markers (TP, FP, FN, TN)
+  - Time-stamped position markers
+- Integrated via viz_hooks for seamless testing workflow
 
 ## Advanced Usage
 
-### Custom Analysis Pipelines
+### Custom Hallucination Detection (Programmatic)
 ```python
-from analysis.analysis_hotspots import analyze_hotspots
-from analysis.analysis_similarity import analyze_trajectory_clustering
-from analysis.analysis_safety import calculate_safety_metrics
+from src.analysis.hallucination_detector_enhanced import HallucinationDetector
 
-# Hotspot analysis
-hotspots = analyze_hotspots(df, ['fp', 'fn'], eps_nm=3.0, min_samples=5)
+# Initialize detector
+detector = HallucinationDetector(
+    action_period_s=10.0,        # Match environment timestep
+    res_window_s=60.0,           # Resolution assessment window
+    horizon_s=120.0,             # TCPA/DCPA horizon
+    action_thresh=(3.0, 5.0),    # Heading (deg), speed (kt) thresholds
+    sep_thresh_nm=5.0            # Well-clear separation
+)
 
-# Trajectory clustering
-similarity = analyze_trajectory_clustering(baseline_df, shifted_df)
+# Analyze trajectory
+series = detector.analyze_trajectory(
+    trajectory_data,
+    waypoints_dict,
+    scenario_info
+)
 
-# Safety metrics
-safety = calculate_safety_metrics(df)
+# Extract metrics
+metrics = detector.compute_episode_metrics(series)
+print(f"F1 Score: {metrics['f1_score']:.3f}")
+print(f"Precision: {metrics['precision']:.3f}")
+print(f"Recall: {metrics['recall']:.3f}")
 ```
 
-### Command Line Options
+### Survival Curve Analysis Options
 ```bash
-# Skip specific components
-python analysis/make_all_figures.py --skip-maps --skip-interactive
-
-# Custom directories
-python analysis/make_all_figures.py --results-dir custom_results --output-dir custom_output
+# Full options
+python src/analysis/survival_curve_analysis.py \
+  --data_dir results_baseline_vs_shift \
+  --output survival_analysis \
+  --scenario head_on \              # Optional: single scenario
+  --no_ci                           # Skip confidence intervals (faster)
 
 # Help
-python analysis/make_all_figures.py --help
+python src/analysis/survival_curve_analysis.py --help
+```
+
+### Bundle Analysis Configuration
+```bash
+# Compact mode (fewer plots)
+python src/analysis/shift_bundle_analysis.py \
+  --data_dir results \
+  --output bundle_compact \
+  --compact \
+  --scenarios "head_on,parallel"
+
+# Full options
+python src/analysis/shift_bundle_analysis.py --help
+```
+
+### Legacy Batch Processing (Optional)
+```bash
+# Use make_all_figures.py for comprehensive batch visualization
+python src/analysis/make_all_figures.py \
+  --results-dir results \
+  --output-dir figures_batch \
+  --skip-interactive              # Skip slow interactive components
 ```
 
 ## Research Applications
 
-This package is designed for:
+This package supports academic research in:
 
-- **Thesis figure generation**: Complete set of publication-ready visualizations
-- **Hallucination analysis**: Systematic study of false positive/negative patterns
-- **Safety assessment**: Quantitative evaluation of collision avoidance performance
-- **Behavioral analysis**: Understanding how input perturbations affect aircraft behavior
-- **Geographic analysis**: Spatial patterns in conflicts and detection failures
+### 1. Distribution Shift Robustness
+- Cross-scenario generalization analysis (baseline vs shift matrix)
+- Targeted shift testing for identifying failure modes
+- Bundle-based shift categorization (kinematics, geometry, environment)
+- Statistical comparison with bootstrap confidence intervals
+
+### 2. Hallucination Detection in Safety-Critical AI
+- Real-time conflict prediction error analysis
+- False alert (ghost conflict) vs missed conflict trade-offs
+- Intent-aware and threat-aware alert filtering
+- Temporal resolution assessment (post-alert conflict resolution)
+
+### 3. Safety Margin Analysis
+- Episode-level minimum separation reliability curves
+- LoS risk quantification: Pr(min_sep < 5 NM)
+- Survival function statistics across training vs testing scenarios
+- Generic vs scenario-specific model comparison
+
+### 4. Multi-Agent Policy Evaluation
+- Team coordination assessment via reward decomposition
+- Agent-specific vulnerability identification
+- Cross-model performance benchmarking
+- Efficiency metrics (path deviation, flight time)
 
 ## Performance Notes
 
-- **Geographic maps**: Use sparse sampling for safety circles (every_n parameter) to improve performance
-- **Time animations**: Limited to reasonable time ranges to avoid browser memory issues
-- **Large datasets**: Consider filtering or sampling for interactive visualizations
-- **Static figures**: Full resolution suitable for publication (300 DPI)
+- **Survival curve bootstrap**: Can take 30-60 seconds with confidence intervals (1000 samples per curve)
+  - Use `--no_ci` flag for faster execution during development
+- **Bundle analysis**: Processing 100+ episodes per shift takes ~2-3 minutes
+  - Use `--compact` flag to skip detailed per-bundle plots
+- **Trajectory comparison maps**: Large episode counts (>50) may cause browser slowdown
+  - Maps are generated automatically but can be disabled in testing scripts
+- **Memory usage**: Each episode trajectory CSV is ~50-200 KB
+  - 100 episodes × 30 model-scenario combinations = ~150 MB typical
+
+## Known Limitations
+
+1. **Hallucination detection accuracy**: Depends on action threshold tuning (3° heading, 5 kt speed defaults)
+   - May need adjustment for different aircraft types or scenarios
+2. **Survival curves require complete trajectories**: Missing or truncated episodes are skipped
+3. **Bundle analysis assumes consistent shift naming**: Non-standard shift types may be uncategorized
+4. **Geographic maps limited to small regions**: Global coordinates may have projection distortion
 
 ## Troubleshooting
 
-**Import errors**: Ensure all dependencies are installed via `pip install -r requirements.txt`
+### Common Issues
 
-**Empty visualizations**: Check data format and column names match expectations
+**1. Import errors for analysis modules**
+```bash
+# Ensure you're running from project root
+cd /path/to/ATC_Hallucination
+python -m src.analysis.survival_curve_analysis --help
 
-**Performance issues**: Reduce data size or increase sampling intervals for interactive components
+# Or add to PYTHONPATH
+export PYTHONPATH="${PYTHONPATH}:/path/to/ATC_Hallucination"
+```
 
-**Memory errors**: Use smaller time windows or geographic regions for animations
+**2. "No trajectory files found" in survival curve analysis**
+```bash
+# Check directory structure - expects:
+# data_dir/PPO_model__on__scenario__[baseline|shift]/ep_XXX/traj_ep_XXXX.csv
+
+# Verify with:
+ls results_baseline_vs_shift/PPO_*/ep_*/traj_*.csv
+```
+
+**3. Missing hallucination detection columns**
+```python
+# Ensure environment has detection enabled:
+env_config = {
+    "enable_hallucination_detection": True,  # Must be True
+    "scenario_path": "scenarios/head_on.json",
+    # ... other config
+}
+```
+
+**4. Bootstrap confidence intervals failing**
+- Requires ≥20 episodes per scenario for statistical validity
+- Use `--no_ci` flag if you have fewer episodes
+- Error message: "Not enough data for bootstrap" → need more episodes
+
+**5. Bundle analysis empty results**
+- Check shift naming conventions in episode metadata
+- Bundle categorization expects: `speed_kt_delta`, `heading_deg_delta`, `position_*`, etc.
+- Use `--compact` mode to skip visualization if data processing works
+
+### Getting Help
+
+1. Check `CODE_AUDIT_RESULTS.md` for file usage status
+2. Review example commands in this README
+3. Use `--help` flag on CLI tools for detailed options
+4. Check trajectory CSV format against requirements above
+
+## Module Reference
+
+### Active Modules (In Testing Pipeline)
+
+| Module | Purpose | Usage | Lines |
+|--------|---------|-------|-------|
+| `hallucination_detector_enhanced.py` | Real-time conflict detection error analysis | Integrated in environment | 913 |
+| `survival_curve_analysis.py` | Episode minimum separation reliability | Standalone CLI tool | 473 |
+| `shift_bundle_analysis.py` | Grouped shift robustness evaluation | Standalone CLI tool | 976 |
+| `trajectory_comparison_plot.py` | Interactive Plotly trajectory plots | Auto-generated via viz_hooks | 974 |
+| `trajectory_comparison_map.py` | Geographic Folium trajectory maps | Auto-generated via viz_hooks | 461 |
+| `viz_hooks.py` | Testing-visualization integration layer | Called by testing scripts | 536 |
+
+### Utility Modules (Available for Advanced Use)
+
+| Module | Purpose | Import Only |
+|--------|---------|-------------|
+| `viz_geographic.py` | Base Folium map generation | `from src.analysis.viz_geographic import build_map` |
+| `viz_plotly.py` | Base Plotly interactive plots | `from src.analysis.viz_plotly import time_series_panel` |
+| `viz_matplotlib.py` | Base Matplotlib static figures | `from src.analysis.viz_matplotlib import plot_degradation_curves` |
+| `ingest.py` | Data loading and harmonization | `from src.analysis.ingest import load_trajectories` |
+| `analysis_hotspots.py` | DBSCAN clustering (optional) | Not in standard pipeline |
+| `analysis_similarity.py` | DTW trajectory comparison (optional) | Not in standard pipeline |
+| `analysis_safety.py` | Safety statistics (optional) | Not in standard pipeline |
+
+### Legacy/Optional
+
+| Module | Status | Notes |
+|--------|--------|-------|
+| `make_all_figures.py` | Legacy batch processor | Standalone tool, not in testing pipeline |
+
+### Deprecated (Safe to Remove)
+
+See `CODE_AUDIT_RESULTS.md` for details on 5 obsolete files totaling 3,002 lines:
+- `corrected_scenario_plots.py`
+- `enhanced_scenario_analysis.py`
+- `enhanced_scenario_plots.py`
+- `final_scenario_plots.py`
+- `scenario_specific_performance_plots.py`
 
 ## Contributing
 
-The package is modular and extensible:
+Contributions should focus on:
+1. **Active modules**: Improve core detection, survival curves, bundle analysis
+2. **Integration**: Enhance viz_hooks for better testing workflow
+3. **Documentation**: Keep README synchronized with actual usage
+4. **Testing**: Add unit tests for analysis functions
 
-- Add new visualization types in respective modules
-- Extend analysis components with domain-specific metrics
-- Customize styling and color schemes in individual functions
-- Add new data ingestion formats in `ingest.py`
+**Before adding new files**: Check if functionality can be added to existing modules to avoid proliferation.
 
 ## License
 
-This visualization package is part of the ATC Hallucination research project.
+This analysis package is part of the ATC Hallucination Detection research project (2024-2025).
+
+## Citation
+
+If you use this analysis package in your research, please cite:
+
+```bibtex
+@software{atc_hallucination_analysis,
+  title={ATC Hallucination Detection Analysis Tools},
+  author={[Your Name]},
+  year={2025},
+  note={Multi-agent reinforcement learning safety assessment tools}
+}
+```

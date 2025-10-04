@@ -1,20 +1,10 @@
 """
-Multi-Agent Reinforcement Learning Environment for Air Traffic Collision Avoidance.
-
-This module implements a comprehensive MARL environment for training air traffic control
-policies using BlueSky as the flight dynamics simulator. The environment supports:
-
-- Multi-agent coordination with shared policy architecture
-- Relative observation spaces (no raw lat/lon) for generalization
-- Team-based potential-based reward shaping (PBRS) for coordination
-- Real-time hallucination detection during training/evaluation
-- Comprehensive trajectory logging with safety metrics
-- Distribution shift testing support (targeted and unison shifts)
-- Wind field simulation for environmental robustness
-- Action delay modeling for realistic response times
-
-The environment integrates seamlessly with RLlib training workflows and provides
-rich trajectory data for offline analysis and academic evaluation.
+Module Name: marl_collision_env_minimal.py
+Description: MARL environment for air traffic collision avoidance using BlueSky simulation.
+             Implements PettingZoo ParallelEnv with team-based PBRS, relative observations,
+             waypoint navigation, and real-time hallucination detection for analysis.
+Author: Som
+Date: 2025-10-04
 """
 
 import os
@@ -27,7 +17,7 @@ from typing import Dict, Any, Optional, Tuple
 import logging
 from math import cos, sin, radians
 
-# Suppress verbose BlueSky logging to reduce noise during training
+# Suppress BlueSky logging
 for name in ("bluesky", "bluesky.navdatabase", "bluesky.simulation", "bluesky.traffic"):
     logging.getLogger(name).setLevel(logging.ERROR)
 
@@ -39,34 +29,34 @@ import bluesky as bs
 
 
 # Action scaling from normalized [-1,1] to physical units
-D_HEADING = 18.0   # Maximum heading change per action (degrees)
-D_VELOCITY = 10.0  # Maximum speed change per action (knots)
+D_HEADING = 18.0   # Max heading change per action (deg)
+D_VELOCITY = 10.0  # Max speed change per action (kt)
 
-# Team coordination reward parameters (PBRS-based multi-agent shaping)
-DEFAULT_TEAM_COORDINATION_WEIGHT = 0.2      # Weight of team reward vs individual
-DEFAULT_TEAM_GAMMA = 0.99                   # Team potential discount factor
-DEFAULT_TEAM_SHARE_MODE = "responsibility"  # How to distribute team rewards
-DEFAULT_TEAM_EMA = 0.001                    # EMA smoothing for team potential
-DEFAULT_TEAM_CAP = 0.01                     # Maximum team reward magnitude
-DEFAULT_TEAM_ANNEAL = 1.0                   # Team reward annealing factor
-DEFAULT_TEAM_NEIGHBOR_THRESHOLD_KM = 10.0   # Neighbor proximity threshold
+# Team coordination reward parameters (PBRS)
+DEFAULT_TEAM_COORDINATION_WEIGHT = 0.2
+DEFAULT_TEAM_GAMMA = 0.99
+DEFAULT_TEAM_SHARE_MODE = "responsibility"
+DEFAULT_TEAM_EMA = 0.001
+DEFAULT_TEAM_CAP = 0.01
+DEFAULT_TEAM_ANNEAL = 1.0
+DEFAULT_TEAM_NEIGHBOR_THRESHOLD_KM = 10.0
 
-# Unified reward system defaults (individual agent components)
-DEFAULT_PROGRESS_REWARD_PER_KM = 0.04       # Signed progress reward (positive for forward, negative for backtrack)
-DEFAULT_TIME_PENALTY_PER_SEC = -0.0005      # Time penalty to encourage efficiency
-DEFAULT_REACH_REWARD = 10.0                 # Bonus for reaching waypoint
-DEFAULT_VIOLATION_ENTRY_PENALTY = -25.0     # One-time penalty on well-clear violation entry
-DEFAULT_VIOLATION_STEP_SCALE = -1.0         # Per-step violation penalty scaling factor
-DEFAULT_DEEP_BREACH_NM = 1.0                # Threshold for steeper penalty scaling
-DEFAULT_DRIFT_IMPROVE_GAIN = 0.01           # Reward per degree of drift improvement
-DEFAULT_DRIFT_DEADZONE_DEG = 8.0            # Deadzone to prevent drift oscillation penalties
-DEFAULT_ACTION_COST_PER_UNIT = -0.01        # Cost for non-neutral actions
-DEFAULT_TERMINAL_NOT_REACHED_PENALTY = -10.0 # Penalty for episode termination without reaching goal
+# Individual reward system defaults
+DEFAULT_PROGRESS_REWARD_PER_KM = 0.04
+DEFAULT_TIME_PENALTY_PER_SEC = -0.0005
+DEFAULT_REACH_REWARD = 10.0
+DEFAULT_VIOLATION_ENTRY_PENALTY = -25.0
+DEFAULT_VIOLATION_STEP_SCALE = -1.0
+DEFAULT_DEEP_BREACH_NM = 1.0
+DEFAULT_DRIFT_IMPROVE_GAIN = 0.01
+DEFAULT_DRIFT_DEADZONE_DEG = 8.0
+DEFAULT_ACTION_COST_PER_UNIT = -0.01
+DEFAULT_TERMINAL_NOT_REACHED_PENALTY = -10.0
 
-# Physical constants and thresholds
-NM_TO_KM = 1.852                 # Nautical miles to kilometers conversion
-DRIFT_NORM_DEN = 180.0           # Normalization factor for heading drift calculations
-WAYPOINT_THRESHOLD_NM = 1.0      # Distance threshold for waypoint capture
+# Physical constants
+NM_TO_KM = 1.852
+DRIFT_NORM_DEN = 180.0
+WAYPOINT_THRESHOLD_NM = 1.0
 
 
 def kt_to_nms(kt):
@@ -87,21 +77,23 @@ def _clean_bs():
 
 
 def nm_to_lat_deg(nm: float) -> float:
+    """Convert nautical miles to latitude degrees."""
     return nm / 60.0
 
 
 def nm_to_lon_deg(nm: float, lat_deg: float) -> float:
+    """Convert nautical miles to longitude degrees at given latitude."""
     return nm / (60.0 * max(1e-6, math.cos(math.radians(lat_deg))))
 
 
 def heading_to_unit(heading_deg: float):
-    """Return unit vector (east, north) for given heading."""
+    """Convert heading to unit vector (east, north)."""
     rad = math.radians(90.0 - heading_deg)
     return (math.cos(rad), math.sin(rad))
 
 
 def haversine_nm(lat1_deg: float, lon1_deg: float, lat2_deg: float, lon2_deg: float) -> float:
-    """Compute great-circle distance in nautical miles."""
+    """Calculate great-circle distance in nautical miles."""
     from math import radians, sin, cos, sqrt, atan2
     
     lat1, lon1, lat2, lon2 = map(radians, [lat1_deg, lon1_deg, lat2_deg, lon2_deg])
@@ -115,27 +107,15 @@ def haversine_nm(lat1_deg: float, lon1_deg: float, lat2_deg: float, lon2_deg: fl
 
 class MARLCollisionEnv(ParallelEnv):
     """
-    Multi-Agent Reinforcement Learning Environment for Air Traffic Collision Avoidance.
+    MARL Environment for Air Traffic Collision Avoidance.
     
-    This environment simulates air traffic control scenarios where multiple aircraft
-    must navigate to their destinations while avoiding conflicts and collisions.
-    The environment integrates with BlueSky for realistic flight dynamics and
-    provides a unified reward system with enhanced team coordination.
+    Simulates multi-aircraft scenarios with BlueSky dynamics. Agents navigate to waypoints
+    while avoiding conflicts using continuous heading/speed control. Features unified reward
+    system with team-based PBRS, relative observations, and comprehensive trajectory logging.
     
-    Key Features:
-    - BlueSky integration for realistic aircraft simulation
-    - Unified well-clear violation system (no double-counting penalties)
-    - Drift improvement shaping (rewards progress toward optimal heading)
-    - Enhanced team-based potential-based reward shaping (PBRS)
-    - Comprehensive trajectory logging for analysis
-    - Support for various air traffic control scenarios
-    
-    Unified Reward Structure:
-    - Progress: Signed reward for movement toward/away from waypoint
-    - Violations: Entry penalty + severity-scaled step penalties for well-clear violations
-    - Drift Improvement: Rewards for reducing heading drift (not absolute penalties)
-    - Team Coordination: Enhanced PBRS with 5 NM sensitivity for better cooperation
-    - Action Costs: Penalties for non-neutral control inputs
+    Args:
+        env_config (dict): Configuration parameters including scenario_path, neighbor_topk,
+                          collision_nm, reward coefficients, and team coordination settings.
     """
     metadata = {"name": "marl_collision_env", "render_modes": []}
     
@@ -157,7 +137,6 @@ class MARLCollisionEnv(ParallelEnv):
         if not self.scenario_path:
             raise ValueError("scenario_path must be provided in env_config")
         
-        # Ensure absolute path
         if not os.path.isabs(self.scenario_path):
             current_dir = os.path.dirname(os.path.abspath(__file__))
             project_root = os.path.join(current_dir, "..", "..")
@@ -170,7 +149,6 @@ class MARLCollisionEnv(ParallelEnv):
         
         self.max_episode_steps = int(env_config.get("max_episode_steps", 100))
         
-        # Initialize BlueSky once per process
         if not _BS_READY:
             import sys
             import time
@@ -193,60 +171,51 @@ class MARLCollisionEnv(ParallelEnv):
                 sys.stdout = old_stdout
                 sys.stderr = old_stderr
 
-        # Load scenario FIRST to get possible_agents
         with open(self.scenario_path, "r", encoding="utf-8") as f:
             self._scenario_template = json.load(f)
 
         self.possible_agents = [a["id"] for a in self._scenario_template["agents"]]
         self.agents = []
 
-        # Action delay support for shift testing
         self.action_delay_steps = int(env_config.get("action_delay_steps", 0))
         self._action_queues = {aid: [[0.0, 0.0]] * self.action_delay_steps
                                for aid in self.possible_agents}
 
-        # Internal state and configuration (BEFORE spaces)
         self._prev_actions_deg_kt = {aid: np.zeros(2, dtype=np.float32) for aid in self.possible_agents}
         self._step_idx = 0
         self._episode_id = 0
-        self._agent_waypoints = {}  # Store waypoints for each agent
-        self._traj_rows = []  # Enhanced trajectory logging
-        self._separation_threshold_nm = float(env_config.get("separation_nm", 5.0))  # NM for conflict detection
+        self._agent_waypoints = {}
+        self._traj_rows = []
+        self._separation_threshold_nm = float(env_config.get("separation_nm", 5.0))
         self.log_trajectories = env_config.get("log_trajectories", True)
-        self.episode_tag = env_config.get("episode_tag", None)  # Optional episode tag for CSV naming
+        self.episode_tag = env_config.get("episode_tag", None)
         
-        # Observation configuration (BEFORE space creation) - relative mode only
-        self.neighbor_topk     = int(env_config.get("neighbor_topk", 3))
+        self.neighbor_topk = int(env_config.get("neighbor_topk", 3))
         
-        # Team coordination (PBRS) configuration
-        self.team_w         = float(env_config.get("team_coordination_weight", DEFAULT_TEAM_COORDINATION_WEIGHT))
-        self.team_gamma     = float(env_config.get("team_gamma", DEFAULT_TEAM_GAMMA))
-        self.team_share     = str(env_config.get("team_share_mode", DEFAULT_TEAM_SHARE_MODE)).lower()
-        self.team_ema_a     = float(env_config.get("team_ema", DEFAULT_TEAM_EMA))
-        self.team_cap       = float(env_config.get("team_cap", DEFAULT_TEAM_CAP))
-        self.team_anneal    = float(env_config.get("team_anneal", DEFAULT_TEAM_ANNEAL))
-        self.team_nb_km     = float(env_config.get("team_neighbor_threshold_km", DEFAULT_TEAM_NEIGHBOR_THRESHOLD_KM))
-        self._team_phi      = None
+        self.team_w = float(env_config.get("team_coordination_weight", DEFAULT_TEAM_COORDINATION_WEIGHT))
+        self.team_gamma = float(env_config.get("team_gamma", DEFAULT_TEAM_GAMMA))
+        self.team_share = str(env_config.get("team_share_mode", DEFAULT_TEAM_SHARE_MODE)).lower()
+        self.team_ema_a = float(env_config.get("team_ema", DEFAULT_TEAM_EMA))
+        self.team_cap = float(env_config.get("team_cap", DEFAULT_TEAM_CAP))
+        self.team_anneal = float(env_config.get("team_anneal", DEFAULT_TEAM_ANNEAL))
+        self.team_nb_km = float(env_config.get("team_neighbor_threshold_km", DEFAULT_TEAM_NEIGHBOR_THRESHOLD_KM))
+        self._team_phi = None
         self._team_dphi_ema = 0.0
         
-        # Unified individual reward configuration
         self.r_prog_per_km = float(env_config.get("progress_reward_per_km", DEFAULT_PROGRESS_REWARD_PER_KM))
         self.r_time_per_s = float(env_config.get("time_penalty_per_sec", DEFAULT_TIME_PENALTY_PER_SEC))
         self.r_reach_bonus = float(env_config.get("reach_reward", DEFAULT_REACH_REWARD))
         self.action_cost_per_unit = float(env_config.get("action_cost_per_unit", -0.01))
         self.terminal_not_reached_penalty = float(env_config.get("terminal_not_reached_penalty", -10.0))
         
-        # Unified well-clear violation parameters (unified conflict handling)
-        self.sep_nm = float(env_config.get("separation_nm", 5.0))  # already present
+        self.sep_nm = float(env_config.get("separation_nm", 5.0))
         self.violation_entry_penalty = float(env_config.get("violation_entry_penalty", -25.0))
-        self.violation_step_scale    = float(env_config.get("violation_step_scale", -1.0))  # per-step at full breach
-        self.deep_breach_nm          = float(env_config.get("deep_breach_nm", 1.0))  # for stronger scaling near collision
+        self.violation_step_scale = float(env_config.get("violation_step_scale", -1.0))
+        self.deep_breach_nm = float(env_config.get("deep_breach_nm", 1.0))
         
-        # NEW: Drift improvement shaping (replace absolute drift penalty)
-        self.drift_improve_gain      = float(env_config.get("drift_improve_gain", 0.01))  # per degree improvement
-        self.drift_deadzone_deg      = float(env_config.get("drift_deadzone_deg", 8.0))
+        self.drift_improve_gain = float(env_config.get("drift_improve_gain", 0.01))
+        self.drift_deadzone_deg = float(env_config.get("drift_deadzone_deg", 8.0))
         
-        # Enhanced team PBRS configuration (overwrite defaults if specified)
         if "team_coordination_weight" in env_config:
             self.team_w = float(env_config["team_coordination_weight"])
         if "team_ema" in env_config:
@@ -254,32 +223,24 @@ class MARLCollisionEnv(ParallelEnv):
         if "team_cap" in env_config:
             self.team_cap = float(env_config["team_cap"])
         
-        # Per-episode memory
         self._prev_wp_dist_nm: Dict[str, Optional[float]] = {aid: None for aid in self.possible_agents}
         self._conflict_on_prev = {aid: 0 for aid in self.possible_agents}
-        self._waypoint_hits = {aid: 0 for aid in self.possible_agents}  # Track cumulative waypoint completions
-        self._agents_to_stop_logging = set()  # Track agents that should no longer be logged
-        self._waypoint_reached = {aid: False for aid in self.possible_agents}  # Track if agent has reached waypoint this episode
-        self._waypoint_reached_this_step = {aid: False for aid in self.possible_agents}  # Track if agent reached waypoint THIS step
-        self._agent_done = {aid: False for aid in self.possible_agents}  # Track if agent is completely done
-        self._agent_wpreached = {aid: False for aid in self.possible_agents}  # Persistent waypoint reached flag
+        self._waypoint_hits = {aid: 0 for aid in self.possible_agents}
+        self._agents_to_stop_logging = set()
+        self._waypoint_reached = {aid: False for aid in self.possible_agents}
+        self._waypoint_reached_this_step = {aid: False for aid in self.possible_agents}
+        self._agent_done = {aid: False for aid in self.possible_agents}
+        self._agent_wpreached = {aid: False for aid in self.possible_agents}
         
-        # NEW: Per-agent state tracking for unified reward system
         self._prev_in_violation = {aid: False for aid in self.possible_agents}
-        self._prev_minsep_nm    = {aid: float("inf") for aid in self.possible_agents}
-        self._prev_drift_abs    = {aid: 0.0 for aid in self.possible_agents}
+        self._prev_minsep_nm = {aid: float("inf") for aid in self.possible_agents}
+        self._prev_drift_abs = {aid: 0.0 for aid in self.possible_agents}
 
-        # Baselines captured from the scenario (per agent)
-        self._base_cas_kt = {aid: 250.0 for aid in self.possible_agents}  # overwritten on reset
-        self._spd_bounds_kt = (100.0, 400.0)  # more reasonable CAS window for training
-        # Action scaling now handled by constants D_HEADING and D_VELOCITY
-        
-        # Environmental shift speed bounds scaling
+        self._base_cas_kt = {aid: 250.0 for aid in self.possible_agents}
+        self._spd_bounds_kt = (100.0, 400.0)
         self._spd_bounds_scale = {aid: (1.0, 1.0) for aid in self.possible_agents}
         
-        # Physical collision threshold (used for detection, not termination)
         self.collision_nm = float(env_config.get("collision_nm", 1.0))
-        # Note: Collisions trigger unified violation penalties, eliminating double-counting
 
         # Set observation spaces - relative mode only with finite bounds for stability
         K = self.neighbor_topk
@@ -337,50 +298,54 @@ class MARLCollisionEnv(ParallelEnv):
         else:
             self._hallucination_detector = None
 
-        # Required PettingZoo attributes
         self.agent_selection = None
         
         self._logger = logging.getLogger(self.__class__.__name__)
         self._logger.setLevel(logging.INFO)
 
     def _nm_to_lat(self, nm: float) -> float:
+        """Convert nautical miles to latitude degrees."""
         return nm / 60.0
 
     def _nm_to_lon(self, nm: float, at_lat_deg: float) -> float:
+        """Convert nautical miles to longitude degrees at given latitude."""
         return nm / (60.0 * max(1e-6, math.cos(math.radians(at_lat_deg))))
 
     def _pos_offset(self, lat0: float, lon0: float, north_nm: float, east_nm: float):
+        """Calculate new position given offset in nautical miles."""
         return (lat0 + self._nm_to_lat(north_nm),
                 lon0 + self._nm_to_lon(east_nm, lat0))
 
 
 
     def get_episode_trajectory(self):
-        """Return the current episode trajectory dict (defensive copy)."""
+        """Return deep copy of current episode trajectory dictionary."""
         import copy as _copy
         return _copy.deepcopy(self._rt_trajectory)
 
     def observation_space(self, agent):
+        """Return observation space for given agent."""
         return self._observation_spaces[agent]
 
     def action_space(self, agent):
+        """Return action space for given agent."""
         return self._action_spaces[agent]
     
-    # Required PettingZoo ParallelEnv properties for RLlib
     @property
     def observation_spaces(self):
+        """Return all observation spaces for RLlib."""
         return self._observation_spaces
 
     @property
     def action_spaces(self):
+        """Return all action spaces for RLlib."""
         return self._action_spaces
     
     def observe(self, agent):
-        """Return observation for a specific agent (used by wrapper)."""
+        """Return observation for specific agent (PettingZoo wrapper compatibility)."""
         obs = self._collect_observations()
         if agent in obs:
             return obs[agent]
-        # Default fallback observation
         K = self.neighbor_topk
         null = np.zeros(1, np.float32); zK = np.zeros(K, np.float32)
         return {"wp_dist_norm": null, "cos_to_wp": null, "sin_to_wp": null,
@@ -397,17 +362,24 @@ class MARLCollisionEnv(ParallelEnv):
         return obs, 0.0, False, {}
 
     def reset(self, seed=None, options=None):
+        """Reset environment to initial state with optional distribution shifts.
+        
+        Args:
+            seed: Random seed (unused, deterministic by design).
+            options: Dict with 'shift', 'targeted_shift', 'env_shift' keys for testing.
+            
+        Returns:
+            Tuple of (observations, infos) for all agents.
+        """
         if seed is not None:
-            pass  # deterministic by design
+            pass
         if options is None:
             options = {}
             
-        # Extract shift parameters from options
         shift = options.get("shift", {})
         targeted_shift = options.get("targeted_shift", {})
         env_shift = options.get("env_shift", {})
         
-        # Legacy unison shift support
         pos_nm = float(shift.get("position_nm_delta", 0.0))
         hdg_dg = float(shift.get("heading_deg_delta", 0.0))
         spd_dkt = float(shift.get("speed_kt_delta", 0.0))
@@ -416,30 +388,25 @@ class MARLCollisionEnv(ParallelEnv):
         self._step_idx = 0
         self._agent_waypoints = {}
 
-        # Reset BlueSky efficiently (avoid full RESET which reloads nav DB)
-        bs.stack.stack("HOLD")       # pause simulation
-        bs.stack.stack("DEL WIND")   # clear any residual wind field
+        bs.stack.stack("HOLD")
+        bs.stack.stack("DEL WIND")
         
-        # Delete existing aircraft
         for aid in self.possible_agents:
             try:
                 bs.stack.stack(f"DEL {aid}")
             except Exception:
                 pass
-        bs.stack.stack("TIME 0")     # reset sim clock
-        bs.stack.stack("DT 1.0")     # set sim tick to 1 second
+        bs.stack.stack("TIME 0")
+        bs.stack.stack("DT 1.0")
 
-        # Load scenario and create aircraft
         if not self.scenario_path:
             raise ValueError("scenario_path not set")
             
         with open(self.scenario_path, "r", encoding="utf-8") as f:
             scen = json.load(f)
 
-        # Reset agents list based on scenario
         self.agents = []
         
-        # Clear buffers
         for aid in self.possible_agents:
             self._prev_actions_deg_kt[aid][:] = [0.0, 0.0]
 

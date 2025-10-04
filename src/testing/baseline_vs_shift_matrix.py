@@ -1,5 +1,18 @@
-# src/testing/baseline_vs_shift_matrix.py
-import os, re, json, argparse, pathlib, time
+"""
+Module Name: baseline_vs_shift_matrix.py
+Description: Baseline vs shift matrix analysis framework. Compares trained model performance
+             across different scenarios under nominal and shifted conditions with comprehensive
+             visualization and hallucination detection analysis.
+Author: Som
+Date: 2025-10-04
+"""
+
+import os
+import re
+import json
+import argparse
+import pathlib
+import time
 from typing import Dict, List, Tuple, Optional
 import numpy as np
 import pandas as pd
@@ -41,10 +54,19 @@ except ImportError:
 ENV_NAME = "marl_collision_env_v0"
 DEFAULT_SCENARIOS = ["head_on","parallel","t_formation","converging","canonical_crossing"]
 
-# ------------------ utils ------------------
-def abspath(p): return str(pathlib.Path(p).expanduser().resolve())
+def abspath(p): 
+    """Convert path to absolute path."""
+    return str(pathlib.Path(p).expanduser().resolve())
 
 def discover_scenarios(scen_dir: str) -> Dict[str,str]:
+    """Discover all JSON scenario files in directory.
+    
+    Args:
+        scen_dir: Directory path to search.
+        
+    Returns:
+        Dictionary mapping scenario names to absolute file paths.
+    """
     d = {}
     for p in pathlib.Path(scen_dir).glob("*.json"):
         d[p.stem] = abspath(p)
@@ -52,14 +74,34 @@ def discover_scenarios(scen_dir: str) -> Dict[str,str]:
 
 def parse_baseline_scenario_from_ckpt(ckpt_path: str) -> Optional[str]:
     """
-    Extract training scenario from folder name like:
-    models/PPO_canonical_crossing_20250924_225408
+    Extract training scenario from checkpoint folder name.
+    
+    Args:
+        ckpt_path: Path to model checkpoint directory.
+        
+    Returns:
+        Scenario name ('generic' for generic models, or specific scenario name),
+        or None if pattern doesn't match.
+    
+    Example:
+        'models/PPO_canonical_crossing_20250924_225408' -> 'canonical_crossing'
+        'models/PPO_generic_20250924_225408' -> 'generic'
     """
     base = os.path.basename(ckpt_path.rstrip(r"\/"))
+    if 'generic' in base.lower():
+        return 'generic'
     m = re.search(r"PPO_([a-z_]+)_\d{8}", base, re.IGNORECASE)
     return (m.group(1) if m else None)
 
 def list_checkpoints_from_dir(models_dir: str) -> Dict[str,str]:
+    """List all PPO checkpoint directories in models folder.
+    
+    Args:
+        models_dir: Directory containing model checkpoints.
+        
+    Returns:
+        Dictionary mapping checkpoint names to absolute paths.
+    """
     out = {}
     for p in pathlib.Path(models_dir).glob("PPO_*"):
         if p.is_dir():
@@ -67,8 +109,37 @@ def list_checkpoints_from_dir(models_dir: str) -> Dict[str,str]:
     return out
 
 def register_env_once():
+    """
+    Register flexible environment creator supporting both frozen and generic models.
+    
+    For testing, frozen scenario environments are used even for models trained on
+    generic environments. The creator detects environment type from config.
+    """
     try:
-        register_env(ENV_NAME, lambda cfg: make_env(cfg))   # :contentReference[oaicite:4]{index=4}
+        def flexible_env_creator(cfg):
+            """Create environment based on configuration (frozen or generic)."""
+            # Import generic environment here to avoid circular dependency
+            try:
+                from src.environment.marl_collision_env_generic import MARLCollisionEnvGeneric
+                has_generic = True
+            except ImportError:
+                has_generic = False
+            
+            # Check if this is a frozen scenario environment (has scenario_path)
+            if "scenario_path" in cfg and cfg.get("scenario_path"):
+                # Use frozen scenario environment (normal testing)
+                return make_env(cfg)
+            else:
+                # No scenario_path - this is a generic model checkpoint being loaded
+                # Use generic environment with testing configuration
+                if has_generic:
+                    from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
+                    return ParallelPettingZooEnv(MARLCollisionEnvGeneric(cfg))
+                else:
+                    # Fallback to frozen env with a dummy scenario (shouldn't happen)
+                    return make_env(cfg)
+        
+        register_env(ENV_NAME, flexible_env_creator)
     except Exception:
         # ignore re-register attempts
         pass
@@ -115,7 +186,14 @@ def load_algo(ckpt: str, use_gpu: bool = False) -> Tuple[Algorithm, str]:
         policy_id = list(local.policy_map.keys())[0] if local else "default_policy"
     return algo, policy_id
 
-def build_env(scenario_json: str, results_dir: str, seed: int = 123):
+def build_env(scenario_json: str, results_dir: str, seed: int = 123, is_generic_model: bool = False):
+    """
+    Build environment for testing. 
+    
+    For frozen models: Use MARLCollisionEnv with scenario_path
+    For generic models testing on frozen scenarios: Use MARLCollisionEnv with scenario_path 
+                                                     (generic models can test on frozen scenarios)
+    """
     cfg = {
         "scenario_path": abspath(scenario_json),
         "results_dir": abspath(results_dir),
@@ -897,9 +975,9 @@ def main():
     use_gpu = args.use_gpu and gpu_available
     
     if args.use_gpu and not gpu_available:
-        print("⚠️  GPU requested but not available. Falling back to CPU.")
+        print("WARNING: GPU requested but not available. Falling back to CPU.")
     
-    print(f"🔍 GPU Detection:")
+    print(f"[GPU Detection]")
     print(f"  CUDA available: {gpu_available}")
     print(f"  Using GPU: {use_gpu}")
     if gpu_available:
@@ -937,42 +1015,60 @@ def main():
         base_scn = explicit_baselines.get(alias) \
                     or explicit_baselines.get(parse_baseline_scenario_from_ckpt(ckpt) or "", None) \
                     or parse_baseline_scenario_from_ckpt(ckpt)
+        
+        # Check if this is a generic model (no fixed baseline scenario)
+        is_generic = (base_scn == 'generic')
 
-        if not base_scn or base_scn not in scen_map:
-            # choose by substring fallback
+        if not is_generic and (not base_scn or base_scn not in scen_map):
+            # choose by substring fallback for frozen scenario models
             base_scn = next((s for s in scen_map if s in alias.lower()), None) or next(iter(scen_map.keys()))
-        assert base_scn in scen_map, f"Could not resolve baseline scenario for {alias}"
+        
+        if not is_generic:
+            assert base_scn in scen_map, f"Could not resolve baseline scenario for {alias}"
 
         print(f"\n=== Model: {alias} ===")
         print(f"Checkpoint: {ckpt}")
-        print(f"Baseline scenario: {base_scn}")
+        if is_generic:
+            print(f"Model type: GENERIC (trained on dynamic conflicts, no fixed baseline scenario)")
+            print(f"Testing: Will test against ALL frozen scenarios as shift tests")
+        else:
+            print(f"Model type: FROZEN SCENARIO")
+            print(f"Baseline scenario: {base_scn}")
 
         algo, pid = load_algo(ckpt, use_gpu=use_gpu)  # uses registered env + path-healing; restores exactly as trained
 
-        # --- Baseline run ---
-        base_dir = outdir / f"{alias}__on__{base_scn}__baseline"
-        base_df = run_model_on_scenario(algo, pid, scen_map[base_scn], str(base_dir), episodes=args.episodes)
-        if base_df.empty:
-            print(f"[WARN] No data for baseline {alias} on {base_scn}")
-            continue
-        base_df.to_csv(base_dir/"episode_metrics.csv", index=False)
-        base_mean = {k: float(base_df[k].mean()) for k in ["f1_score","path_efficiency","min_separation_nm"] if k in base_df}
+        # --- Baseline run (skip for generic models - they have no baseline scenario) ---
+        base_mean = {}
+        bc = None
+        if not is_generic:
+            base_dir = outdir / f"{alias}__on__{base_scn}__baseline"
+            base_df = run_model_on_scenario(algo, pid, scen_map[base_scn], str(base_dir), episodes=args.episodes)
+            if base_df.empty:
+                print(f"[WARN] No data for baseline {alias} on {base_scn}")
+                continue
+            base_df.to_csv(base_dir/"episode_metrics.csv", index=False)
+            base_mean = {k: float(base_df[k].mean()) for k in ["f1_score","path_efficiency","min_separation_nm"] if k in base_df}
 
-        # quick visuals (first episode)
-        bc = base_df.iloc[0]["traj_csv"]
-        plot_overlay(bc, str(base_dir/"overlay.png"), f"{alias} on {base_scn} – ep1")
-        plot_minsep(bc,  str(base_dir/"minsep.png"),  f"{alias} on {base_scn} – min sep")
-        
-        # Collect for scenario-centric visualization
-        if base_scn not in scenario_results:
-            scenario_results[base_scn] = {}
-        scenario_results[base_scn][alias] = {'type': 'baseline', 'csv_path': bc}
+            # quick visuals (first episode)
+            bc = base_df.iloc[0]["traj_csv"]
+            plot_overlay(bc, str(base_dir/"overlay.png"), f"{alias} on {base_scn} – ep1")
+            plot_minsep(bc,  str(base_dir/"minsep.png"),  f"{alias} on {base_scn} – min sep")
+            
+            # Collect for scenario-centric visualization
+            if base_scn not in scenario_results:
+                scenario_results[base_scn] = {}
+            scenario_results[base_scn][alias] = {'type': 'baseline', 'csv_path': bc}
+        else:
+            print(f"Skipping baseline test (generic model has no fixed baseline scenario)")
 
-        # --- Shifted runs on all other scenarios ---
+        # --- Shifted runs on all other scenarios (for generic, test on ALL scenarios) ---
         shift_csvs = {}  # Collect shift trajectory CSVs for enhanced visualization
         for scen, scen_json in scen_map.items():
-            if scen == base_scn: continue
-            run_dir = outdir / f"{alias}__on__{scen}"
+            # For generic models, test on ALL scenarios (no baseline to skip)
+            # For frozen models, skip the baseline scenario
+            if not is_generic and scen == base_scn:
+                continue
+            run_dir = outdir / f"{alias}__on__{scen}{'__generic_shift' if is_generic else ''}"
             df = run_model_on_scenario(algo, pid, scen_json, str(run_dir), episodes=args.episodes)
             if df.empty: 
                 print(f"[WARN] No data for {alias} on {scen}")
@@ -994,17 +1090,20 @@ def main():
                 scenario_results[scen] = {}
             scenario_results[scen][alias] = {'type': 'shift', 'csv_path': c}
 
-            # aggregate + deltas vs baseline
+            # aggregate + deltas vs baseline (for generic, no baseline comparison)
             row = {
-                "model_alias": alias, "baseline_scenario": base_scn, "test_scenario": scen,
+                "model_alias": alias, 
+                "baseline_scenario": base_scn if not is_generic else "generic", 
+                "test_scenario": scen,
+                "model_type": "generic" if is_generic else "frozen",
                 # episode means
                 "f1_score": float(df["f1_score"].mean()),
                 "path_efficiency": float(df["path_efficiency"].mean()),
                 "min_separation_nm": float(df["min_separation_nm"].mean()),
-                # deltas (↑ better)
-                "f1_vs_baseline_pct": pct_delta(float(df["f1_score"].mean()), base_mean.get("f1_score")),
-                "path_eff_vs_baseline_pct": pct_delta(float(df["path_efficiency"].mean()), base_mean.get("path_efficiency")),
-                "minsep_vs_baseline_pct": pct_delta(float(df["min_separation_nm"].mean()), base_mean.get("min_separation_nm")),
+                # deltas (↑ better) - only for non-generic models with baseline
+                "f1_vs_baseline_pct": pct_delta(float(df["f1_score"].mean()), base_mean.get("f1_score")) if not is_generic else np.nan,
+                "path_eff_vs_baseline_pct": pct_delta(float(df["path_efficiency"].mean()), base_mean.get("path_efficiency")) if not is_generic else np.nan,
+                "minsep_vs_baseline_pct": pct_delta(float(df["min_separation_nm"].mean()), base_mean.get("min_separation_nm")) if not is_generic else np.nan,
             }
             all_rows.append(row)
 
@@ -1024,40 +1123,43 @@ def main():
     # Process each model-scenario combination to extract detailed metrics
     for alias, ckpt in models.items():
         base_scn = explicit_baselines.get(alias) or parse_baseline_scenario_from_ckpt(ckpt)
-        if not base_scn or base_scn not in scen_map:
+        is_generic = (base_scn == 'generic')
+        
+        if not is_generic and (not base_scn or base_scn not in scen_map):
             base_scn = next((s for s in scen_map if s in alias.lower()), None) or next(iter(scen_map.keys()))
         
-        # Process baseline performance
-        base_dir = outdir / f"{alias}__on__{base_scn}__baseline"
-        if base_dir.exists():
-            base_csv_path = base_dir / "episode_metrics.csv"
-            if base_csv_path.exists():
-                base_df = pd.read_csv(base_csv_path)
-                for _, episode_row in base_df.iterrows():
-                    if 'traj_csv' in episode_row and pd.notna(episode_row['traj_csv']):
-                        # Extract detailed metrics from trajectory CSV
-                        detailed_metrics = extract_comprehensive_metrics_from_csv(episode_row['traj_csv'])
-                        
-                        # Create summary row (similar to targeted_shift_tester structure)
-                        summary_row = {
-                            # Key identification columns
-                            "model_alias": alias,
-                            "baseline_scenario": base_scn,
-                            "test_scenario": base_scn,  # Same as baseline for baseline tests
-                            "model_type": "baseline",  # NEW: baseline vs shift indicator
-                            "episode_id": int(episode_row.get('episode', 1)),
-                            "seed": 42,  # Default seed
-                            # Add all comprehensive metrics
-                            **detailed_metrics
-                        }
-                        detailed_rows.append(summary_row)
+        # Process baseline performance (only for non-generic models)
+        if not is_generic:
+            base_dir = outdir / f"{alias}__on__{base_scn}__baseline"
+            if base_dir.exists():
+                base_csv_path = base_dir / "episode_metrics.csv"
+                if base_csv_path.exists():
+                    base_df = pd.read_csv(base_csv_path)
+                    for _, episode_row in base_df.iterrows():
+                        if 'traj_csv' in episode_row and pd.notna(episode_row['traj_csv']):
+                            # Extract detailed metrics from trajectory CSV
+                            detailed_metrics = extract_comprehensive_metrics_from_csv(episode_row['traj_csv'])
+                            
+                            # Create summary row (similar to targeted_shift_tester structure)
+                            summary_row = {
+                                # Key identification columns
+                                "model_alias": alias,
+                                "baseline_scenario": base_scn,
+                                "test_scenario": base_scn,  # Same as baseline for baseline tests
+                                "model_type": "baseline",  # NEW: baseline vs shift indicator
+                                "episode_id": int(episode_row.get('episode', 1)),
+                                "seed": 42,  # Default seed
+                                # Add all comprehensive metrics
+                                **detailed_metrics
+                            }
+                            detailed_rows.append(summary_row)
         
-        # Process shift performance
+        # Process shift performance (for generic, ALL scenarios are shifts)
         for scen, scen_json in scen_map.items():
-            if scen == base_scn:
+            if not is_generic and scen == base_scn:
                 continue
                 
-            run_dir = outdir / f"{alias}__on__{scen}"
+            run_dir = outdir / f"{alias}__on__{scen}{'__generic_shift' if is_generic else ''}"
             if run_dir.exists():
                 run_csv_path = run_dir / "episode_metrics.csv"
                 if run_csv_path.exists():
@@ -1071,9 +1173,9 @@ def main():
                             summary_row = {
                                 # Key identification columns
                                 "model_alias": alias,
-                                "baseline_scenario": base_scn,
+                                "baseline_scenario": base_scn if not is_generic else "generic",
                                 "test_scenario": scen,
-                                "model_type": "shift",  # NEW: baseline vs shift indicator
+                                "model_type": "generic" if is_generic else "shift",  # NEW: baseline vs shift vs generic indicator
                                 "episode_id": int(episode_row.get('episode', 1)),
                                 "seed": 42,  # Default seed
                                 # Add all comprehensive metrics

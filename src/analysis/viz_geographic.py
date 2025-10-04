@@ -1,22 +1,11 @@
 """
-Interactive Geographic Visualization for Air Traffic Analysis.
+Module Name: viz_geographic.py
+Description: Interactive geographic visualization for air traffic analysis using Folium.
+Author: Som
+Date: 2025-10-04
 
-This module provides comprehensive interactive mapping capabilities using Folium
-for visualizing aircraft trajectories, conflicts, and hallucination detection
-results in a geospatial context suitable for academic presentation.
-
-Visualization Features:
-- Interactive Trajectory Maps: Baseline vs shifted trajectory overlays
-- Conflict Heatmaps: Geographic distribution of Loss of Separation events
-- Safety Circles: Dynamic 5 NM separation threshold visualization
-- Hallucination Markers: Color-coded FP/FN/TP/TN event locations
-- Temporal Animation: Time-based trajectory playback with conflict overlay
-- Multi-layer Control: Toggle different analysis layers for focused viewing
-
-Integration:
-- Folium-based: Pure Python library generating Leaflet.js interactive maps
-- Academic Ready: Publication-quality visualizations with professional styling
-- Real-time Analysis: Direct integration with hallucination detection pipeline
+Provides interactive mapping with trajectory overlays, conflict heatmaps, safety circles,
+hallucination markers, and temporal animation suitable for academic presentation.
 """
 
 import json
@@ -27,12 +16,12 @@ import folium
 from folium import Map, Circle, PolyLine, LayerControl, FeatureGroup
 from folium.plugins import HeatMap, HeatMapWithTime, TimestampedGeoJson
 
-# Constants
-NM_TO_M = 1852.0  # Nautical miles to meters conversion
+NM_TO_M = 1852.0  # Nautical miles to meters
+
 
 def _haversine_nm(lat1, lon1, lat2, lon2):
     """Calculate distance between two points in nautical miles using haversine formula."""
-    R_nm = 3440.065  # Earth radius in nautical miles
+    R_nm = 3440.065  # Earth radius in NM
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
     a = (math.sin(dlat/2)**2 + 
@@ -218,15 +207,10 @@ def build_map(baseline_df, shifted_df=None, out_html="map.html"):
     """
     Generate comprehensive interactive map with multi-layer trajectory analysis.
     
-    Creates a complete geospatial visualization combining trajectory paths,
-    conflict detection results, safety analysis, and temporal animations
-    in a single interactive HTML map suitable for academic presentation.
-    
     Args:
-        baseline_df: DataFrame with baseline trajectory data including position,
-                    conflict flags, and hallucination detection results
-        shifted_df: Optional DataFrame with shifted trajectory data for comparison
-        out_html: Output HTML file path for the interactive map
+        baseline_df: DataFrame with baseline trajectory data
+        shifted_df: Optional DataFrame with shifted trajectory data
+        out_html: Output HTML file path
         
     Returns:
         str: Absolute path to saved HTML map file

@@ -63,12 +63,14 @@ class SurvivalCurveAnalyzer:
             if len(parts) != 2:
                 continue
                 
-            model_alias = parts[0]  # e.g., "PPO_canonical_crossing"
-            scenario_part = parts[1]  # e.g., "canonical_crossing__baseline" or "converging"
+            model_alias = parts[0]  # e.g., "PPO_canonical_crossing" or "PPO_generic_20251004_023328"
+            scenario_part = parts[1]  # e.g., "canonical_crossing__baseline" or "converging" or "canonical_crossing__generic_shift"
             
-            # Extract test scenario
+            # Extract test scenario (remove suffix tags)
             if "__baseline" in scenario_part:
                 test_scenario = scenario_part.replace("__baseline", "")
+            elif "__generic_shift" in scenario_part:
+                test_scenario = scenario_part.replace("__generic_shift", "")
             else:
                 test_scenario = scenario_part
             
@@ -246,9 +248,10 @@ class SurvivalCurveAnalyzer:
         for i, (model_alias, episode_mins) in enumerate(scenario_data.items()):
             model_short = model_alias.replace('PPO_', '')
             
-            # Determine if this is the baseline model
-            baseline_scenario = model_short
-            is_baseline = (baseline_scenario == test_scenario)
+            # Determine if this is the baseline model (frozen scenario-specific) or generic model
+            is_generic = 'generic' in model_short.lower()
+            baseline_scenario = model_short.split('_')[0] if not is_generic else None
+            is_baseline = (not is_generic and baseline_scenario == test_scenario)
             
             # Calculate survival function
             x_vals, survival_vals = self.calculate_empirical_survival_function(episode_mins)
@@ -258,11 +261,13 @@ class SurvivalCurveAnalyzer:
             
             # Plot styling
             color = colors[i % len(colors)]
-            linestyle = '-' if is_baseline else '--'
-            linewidth = 3 if is_baseline else 2
+            linestyle = '-' if is_baseline else (':' if is_generic else '--')
+            linewidth = 3 if is_baseline else (2.5 if is_generic else 2)
             alpha = 1.0 if is_baseline else 0.8
             
-            label = f'{model_short}{"*" if is_baseline else ""} (N={len(episode_mins)})'
+            # Label with markers: * = baseline (trained on this scenario), G = generic model
+            marker = '*' if is_baseline else ('G' if is_generic else '')
+            label = f'{model_short}{marker} (N={len(episode_mins)})'
             
             # Plot survival curve
             ax.plot(x_vals, survival_vals, color=color, linestyle=linestyle, 
@@ -366,7 +371,9 @@ class SurvivalCurveAnalyzer:
                 continue
             
             model_short = model_alias.replace('PPO_', '')
-            is_baseline = (model_short == test_scenario)
+            is_generic = 'generic' in model_short.lower()
+            baseline_scenario = model_short.split('_')[0] if not is_generic else None
+            is_baseline = (not is_generic and baseline_scenario == test_scenario)
             
             # Calculate survival function
             x_vals, survival_vals = self.calculate_empirical_survival_function(episode_mins)
@@ -395,6 +402,7 @@ class SurvivalCurveAnalyzer:
                 'model_short': model_short,
                 'test_scenario': test_scenario,
                 'is_baseline': is_baseline,
+                'is_generic': is_generic,
                 'n_episodes': len(episode_mins),
                 'mean_min_sep_nm': mean_min_sep,
                 'median_min_sep_nm': median_min_sep,

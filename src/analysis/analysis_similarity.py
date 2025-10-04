@@ -1,42 +1,28 @@
 """
-Trajectory Similarity Analysis using Dynamic Time Warping.
+Module Name: analysis_similarity.py
+Description: Trajectory similarity analysis using Dynamic Time Warping (DTW).
+Author: Som
+Date: 2025-10-04
 
-This module provides sophisticated trajectory comparison capabilities for evaluating
-the impact of distribution shifts on aircraft behavior patterns. Uses Dynamic Time
-Warping (DTW) to quantify trajectory deviations in a way that's robust to temporal
-alignment differences.
-
-Core Functionality:
-- Dynamic Time Warping: Optimal alignment of time series for similarity measurement
-- Multi-dimensional Analysis: Position, heading, and speed trajectory comparisons
-- Deviation Metrics: Comprehensive quantification of trajectory changes
-- Clustering Analysis: Understanding how trajectories group under different conditions
-
-Applications:
-- Quantifying shift impact magnitude across different perturbation types
-- Identifying which agents are most sensitive to environmental changes
-- Academic analysis of policy robustness and generalization capabilities
+Provides trajectory comparison capabilities for evaluating distribution shift impact
+on aircraft behavior patterns using DTW for robust temporal alignment.
 """
 
 import numpy as np
 import pandas as pd
 from typing import Tuple, Optional
 
+
 def simple_dtw_distance(x, y):
     """
     Compute Dynamic Time Warping distance between two time series.
-    
-    DTW finds the optimal alignment between two time series by allowing
-    elastic stretching to minimize cumulative distance. This is particularly
-    useful for trajectory comparison where timing may vary but spatial
-    patterns should be preserved.
     
     Args:
         x: First time series as numpy array
         y: Second time series as numpy array
         
     Returns:
-        float: DTW distance (lower values indicate greater similarity)
+        float: DTW distance (lower values = greater similarity)
     """
     n, m = len(x), len(y)
     
