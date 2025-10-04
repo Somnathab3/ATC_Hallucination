@@ -102,13 +102,13 @@ Our five standardized scenarios create inevitable conflicts without intervention
 
 <table>
 <tr>
-<td align="center"><b>Head-On</b><br><img src="scenarios/scenario_plots/head_on_radar.html" width="200"/><br>2 aircraft, reciprocal headings<br>18 NM approach distance</td>
-<td align="center"><b>T-Formation</b><br><img src="scenarios/scenario_plots/t_formation_radar.html" width="200"/><br>3 aircraft, perpendicular crossing<br>7.5 NM arm, 10 NM stem</td>
-<td align="center"><b>Parallel</b><br><img src="scenarios/scenario_plots/parallel_radar.html" width="200"/><br>3 aircraft, same direction<br>8 NM in-trail spacing</td>
+<td align="center"><b>Head-On</b><br><img src="docs/scenario_plots/head_on_radar.png" width="200"/><br>2 aircraft, reciprocal headings<br>18 NM approach distance</td>
+<td align="center"><b>T-Formation</b><br><img src="docs/scenario_plots/t_formation_radar.png" width="200"/><br>3 aircraft, perpendicular crossing<br>7.5 NM arm, 10 NM stem</td>
+<td align="center"><b>Parallel</b><br><img src="docs/scenario_plots/parallel_radar.png" width="200"/><br>3 aircraft, same direction<br>8 NM in-trail spacing</td>
 </tr>
 <tr>
-<td align="center"><b>Converging</b><br><img src="scenarios/scenario_plots/converging_radar.html" width="200"/><br>4 aircraft, clustered waypoints<br>12 NM radius placement</td>
-<td align="center"><b>Canonical Crossing</b><br><img src="scenarios/scenario_plots/canonical_crossing_radar.html" width="200"/><br>4 aircraft, orthogonal<br>12.5 NM radius, 4-way intersection</td>
+<td align="center"><b>Converging</b><br><img src="docs/scenario_plots/converging_radar.png" width="200"/><br>4 aircraft, clustered waypoints<br>12 NM radius placement</td>
+<td align="center"><b>Canonical Crossing</b><br><img src="docs/scenario_plots/canonical_crossing_radar.png" width="200"/><br>4 aircraft, orthogonal<br>12.5 NM radius, 4-way intersection</td>
 <td></td>
 </tr>
 </table>
@@ -124,9 +124,14 @@ Example collision avoidance trajectories after training:
 
 <table>
 <tr>
-<td><img src="episode_gifs/episode_001_20250929_110201_S65_WP4_C0.gif" width="250"/><br><i>Episode 1: Successful conflict resolution</i></td>
-<td><img src="episode_gifs/episode_002_20250929_110213_S72_WP4_C0.gif" width="250"/><br><i>Episode 2: Complex multi-agent coordination</i></td>
-<td><img src="episode_gifs/episode_003_20250929_110225_S64_WP4_C0.gif" width="250"/><br><i>Episode 3: Waypoint completion with safety</i></td>
+<td><img src="docs/scenario_plots/Trained Viz/Best_headon.gif" width="250"/><br><i>Head-On: Successful conflict resolution</i></td>
+<td><img src="docs/scenario_plots/Trained Viz/best Parallel.gif" width="250"/><br><i>Parallel: In-trail coordination</i></td>
+<td><img src="docs/scenario_plots/Trained Viz/Best_run_T_formation_+35.gif" width="250"/><br><i>T-Formation: Multi-agent crossing</i></td>
+</tr>
+<tr>
+<td><img src="docs/scenario_plots/Trained Viz/Converging.gif" width="250"/><br><i>Converging: Clustered waypoint navigation</i></td>
+<td><img src="docs/scenario_plots/Trained Viz/cannonical.gif" width="250"/><br><i>Canonical Crossing: 4-way intersection</i></td>
+<td></td>
 </tr>
 </table>
 
@@ -138,16 +143,16 @@ Our survival analysis reveals dramatic safety degradation when models face unfam
 
 <table>
 <tr>
-<td align="center"><b>Canonical Crossing Model</b><br><img src="survival_analysis/survival_curve_canonical_crossing.png" width="400"/></td>
-<td align="center"><b>Converging Model</b><br><img src="survival_analysis/survival_curve_converging.png" width="400"/></td>
+<td align="center"><b>Canonical Crossing Model</b><br><img src="docs/survival_analysis/survival_curve_canonical_crossing.png" width="400"/></td>
+<td align="center"><b>Converging Model</b><br><img src="docs/survival_analysis/survival_curve_converging.png" width="400"/></td>
 </tr>
 <tr>
-<td align="center"><b>Head-On Model</b><br><img src="survival_analysis/survival_curve_head_on.png" width="400"/></td>
-<td align="center"><b>Parallel Model</b><br><img src="survival_analysis/survival_curve_parallel.png" width="400"/></td>
+<td align="center"><b>Head-On Model</b><br><img src="docs/survival_analysis/survival_curve_head_on.png" width="400"/></td>
+<td align="center"><b>Parallel Model</b><br><img src="docs/survival_analysis/survival_curve_parallel.png" width="400"/></td>
 </tr>
 <tr>
-<td align="center"><b>T-Formation Model</b><br><img src="survival_analysis/survival_curve_t_formation.png" width="400"/></td>
-<td align="center"><b>Summary Statistics</b><br>(see survival_analysis/survival_curve_statistics.csv)</td>
+<td align="center"><b>T-Formation Model</b><br><img src="docs/survival_analysis/survival_curve_t_formation.png" width="400"/></td>
+<td align="center"><b>Summary Statistics</b><br>(see docs/survival_analysis/survival_curve_statistics.csv)</td>
 </tr>
 </table>
 
