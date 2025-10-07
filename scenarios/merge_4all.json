@@ -1,0 +1,65 @@
+{
+  "scenario_name": "merge_4all",
+  "seed": 42,
+  "notes": "MERGE | 4 inbound to single waypoint (15.0 NM) with small angular spread.",
+  "center": {
+    "lat": 51.0,
+    "lon": 13.7,
+    "alt_ft": 10000.0
+  },
+  "sim_dt_s": 1.0,
+  "agents": [
+    {
+      "id": "A1",
+      "type": "A320",
+      "lat": 50.765076844803524,
+      "lon": 13.835868846850452,
+      "hdg_deg": 340.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.0,
+        "lon": 13.7
+      }
+    },
+    {
+      "id": "A2",
+      "type": "A320",
+      "lat": 50.55399175490354,
+      "lon": 13.762004450896523,
+      "hdg_deg": 355.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.0,
+        "lon": 13.7
+      }
+    },
+    {
+      "id": "A3",
+      "type": "A320",
+      "lat": 50.55399175490354,
+      "lon": 13.637995549103476,
+      "hdg_deg": 5.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.0,
+        "lon": 13.7
+      }
+    },
+    {
+      "id": "A4",
+      "type": "A320",
+      "lat": 50.765076844803524,
+      "lon": 13.564131153149546,
+      "hdg_deg": 20.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.0,
+        "lon": 13.7
+      }
+    }
+  ]
+}

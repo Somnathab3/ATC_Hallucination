@@ -1,0 +1,65 @@
+{
+  "scenario_name": "chase_2x2",
+  "seed": 42,
+  "notes": "CHASE | two separate in-trail conflicts (pairs), lanes \u00b18.0 NM, 6.0 NM spacing.",
+  "center": {
+    "lat": 51.0,
+    "lon": 13.7,
+    "alt_ft": 10000.0
+  },
+  "sim_dt_s": 1.0,
+  "agents": [
+    {
+      "id": "A1",
+      "type": "A320",
+      "lat": 50.7,
+      "lon": 13.488131236124566,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.2,
+        "lon": 13.488131236124566
+      }
+    },
+    {
+      "id": "A2",
+      "type": "A320",
+      "lat": 50.8,
+      "lon": 13.488131236124566,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.2,
+        "lon": 13.488131236124566
+      }
+    },
+    {
+      "id": "A3",
+      "type": "A320",
+      "lat": 50.7,
+      "lon": 13.911868763875432,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.2,
+        "lon": 13.911868763875432
+      }
+    },
+    {
+      "id": "A4",
+      "type": "A320",
+      "lat": 50.8,
+      "lon": 13.911868763875432,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.2,
+        "lon": 13.911868763875432
+      }
+    }
+  ]
+}

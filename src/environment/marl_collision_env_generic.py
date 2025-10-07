@@ -31,6 +31,7 @@ from pettingzoo.utils import ParallelEnv
 # Import shared constants and utilities from minimal environment
 from .marl_collision_env_minimal import (
     D_HEADING, D_VELOCITY, NM_TO_KM, DRIFT_NORM_DEN, WAYPOINT_THRESHOLD_NM,
+    ACTION_THRESHOLD_DEG, ACTION_THRESHOLD_KT,
     kt_to_nms, nm_to_lat_deg, nm_to_lon_deg, heading_to_unit, haversine_nm,
     DEFAULT_TEAM_COORDINATION_WEIGHT, DEFAULT_TEAM_GAMMA, DEFAULT_TEAM_SHARE_MODE,
     DEFAULT_TEAM_EMA, DEFAULT_TEAM_CAP, DEFAULT_TEAM_ANNEAL, DEFAULT_TEAM_NEIGHBOR_THRESHOLD_KM,
@@ -697,6 +698,12 @@ class MARLCollisionEnvGeneric(ParallelEnv):
             
             dh = float(a[0]) * D_HEADING
             dv = float(a[1]) * D_VELOCITY
+            
+            # Apply action thresholds - ignore micro-actions
+            if abs(dh) < ACTION_THRESHOLD_DEG:
+                dh = 0.0
+            if abs(dv) < ACTION_THRESHOLD_KT:
+                dv = 0.0
 
             idx = bs.traf.id2idx(aid)
             if not (isinstance(idx, int) and idx >= 0):

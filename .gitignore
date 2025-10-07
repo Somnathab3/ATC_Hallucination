@@ -13,14 +13,15 @@ checkpoint_*/
 # Results and Analysis Data
 results/
 results_*/
-*_analysis_*/
+_analysis_*/
 shift_analysis_*/
 targeted_shift_analysis_*/
 tests/
 *.zip
 scenarios_*/
-scenario_*/
+scenario_centric*/
 test_plots/
+plots/
 
 
 # Temporary and Cache Files
@@ -33,7 +34,7 @@ cache/
 
 # Episode and Trajectory Data
 episode_gifs/
-*.gif
+
 traj_*.csv
 trajectory_*.csv
 trajectory_*.json
@@ -179,6 +180,11 @@ logs/
 !docs/images/*.png
 !docs/images/*.jpg
 !docs/images/*.jpeg
+!docs/survival_analysis/*.png
+!docs/survival_analysis/*.csv
+!docs/scenario_plots/*.png
+!docs/scenario_plots/*.gif
+!docs/scenario_plots/Trained Viz/*.gif
 
 # Configuration files with sensitive data
 config_local.py

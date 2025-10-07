@@ -1,0 +1,65 @@
+{
+  "scenario_name": "cross_2x2",
+  "seed": 42,
+  "notes": "CROSS | two separate 2-ship 90\u00b0 crossings (centers \u00b112.0 NM, 15.0 NM radius).",
+  "center": {
+    "lat": 51.0,
+    "lon": 13.7,
+    "alt_ft": 10000.0
+  },
+  "sim_dt_s": 1.0,
+  "agents": [
+    {
+      "id": "A1",
+      "type": "A320",
+      "lat": 50.75,
+      "lon": 13.38219685418685,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.25,
+        "lon": 13.38219685418685
+      }
+    },
+    {
+      "id": "A2",
+      "type": "A320",
+      "lat": 51.0,
+      "lon": 12.984942921920412,
+      "hdg_deg": 90.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.0,
+        "lon": 13.779450786453287
+      }
+    },
+    {
+      "id": "A3",
+      "type": "A320",
+      "lat": 50.75,
+      "lon": 14.017803145813149,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.25,
+        "lon": 14.017803145813149
+      }
+    },
+    {
+      "id": "A4",
+      "type": "A320",
+      "lat": 51.0,
+      "lon": 13.620549213546711,
+      "hdg_deg": 90.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.0,
+        "lon": 14.415057078079586
+      }
+    }
+  ]
+}

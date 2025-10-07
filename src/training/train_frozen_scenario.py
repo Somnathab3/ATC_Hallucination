@@ -203,7 +203,7 @@ def train_frozen(repo_root: str,
     env_config = {
         "env_type": env_type,
         "action_delay_steps": 0,
-        "max_episode_steps": 100,
+        "max_episode_steps": 150,
         "separation_nm": 5.0,
         "log_trajectories": log_trajectories,  # Enable/disable detailed logging (controllable via CLI)
         "seed": seed,
@@ -300,7 +300,7 @@ def train_frozen(repo_root: str,
                   .framework("torch")  # Disable torch compilation to avoid GPU indexing issues
                   .api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
                   .env_runners(
-                      num_env_runners=4 if use_gpu else 1,  # Increased for faster execution
+                      num_env_runners=4 if use_gpu else 2,  # Increased workers for better sample decorrelation
                       num_envs_per_env_runner=1,
                       rollout_fragment_length=200,
                       sample_timeout_s=300.0,
@@ -312,11 +312,13 @@ def train_frozen(repo_root: str,
                   .training(
                       gamma=0.995,
                       lr=5e-4 if use_gpu else 3e-4,
-                      train_batch_size=8192 if use_gpu else 4096,
+                      # Increased batch sizes for smoother gradients
+                      train_batch_size=16384 if use_gpu else 12288,
                       num_epochs=10 if use_gpu else 8,
                       model={"fcnet_hiddens": [256, 256],
                              "fcnet_activation": "tanh",
-                             "free_log_std": False},
+                             "free_log_std": False,
+                             "vf_share_layers": False},  # Explicit separate networks
                       grad_clip=1.0,
                       num_sgd_iter=4,
                   )
@@ -344,13 +346,41 @@ def train_frozen(repo_root: str,
                       num_cpus_per_learner=1,
                   )
                   )
-                # Add PPO-specific hyperparameters
-        config["kl_coeff"] = 0.2  # KL divergence coefficient for stability
-        config["entropy_coeff"] = 0.01  # Entropy coefficient for exploration
-        config["vf_loss_coeff"] = 1.0  # Value function coefficient
-        config["clip_param"] = 0.1  # Smaller clipping for stability
+        
+        # ===== OPTIMIZED PPO HYPERPARAMETERS =====
+        
+        # Entropy schedule: anneal from 0.01 → 0.0 after 30% of training
+        # Stabilizes plateau, reduces dithering, enables shorter paths
+        config["entropy_coeff"] = 0.01
+        config["entropy_coeff_schedule"] = [
+            [0, 0.01], 
+            [int(0.3 * timesteps_total), 0.0]
+        ]
+        
+        # Learning rate schedule: cosine-like decay to reduce late policy churn
+        # 3e-4/5e-4 → 1e-4 @ 60% → 5e-5 @ 100%
+        initial_lr = 5e-4 if use_gpu else 3e-4
+        config["lr_schedule"] = [
+            [0, initial_lr],
+            [int(0.6 * timesteps_total), 1e-4],
+            [timesteps_total, 5e-5]
+        ]
+        
+        # GAE lambda: 0.95 (not 1.0) to lower variance in dense conflict scenarios
+        config["lambda"] = 0.95
+        
+        # KL control: reduced for better stability in converging scenarios
+        config["kl_coeff"] = 0.1
+        config["kl_target"] = 0.02  # Auto-adjust KL penalty
+        
+        # Policy clipping: conservative 0.1 for stability (can try 0.15 if stalling)
+        config["clip_param"] = 0.1
+        
+        # Value function settings: prevent underfitting long returns
+        config["vf_loss_coeff"] = 1.0  # Keep at 1.0 unless value loss dominates
+        config["vf_clip_param"] = 50.0  # Prevents critic underfitting
+        
         # Don't normalize actions as we handle scaling in the environment
-        # Set additional config parameters
         from ray.rllib.algorithms.ppo import PPO
         algo_obj = PPO(config=config)  # Build the algorithm
     elif algo.upper() == "SAC":
@@ -569,18 +599,32 @@ def train_frozen(repo_root: str,
     final_ckpt = ""
     zero_conflict_streak = 0
 
+    # Get total number of agents from environment
+    temp_config = {**env_config, "log_trajectories": False, "enable_hallucination_detection": False}
+    if env_type == "generic":
+        tmp_env = MARLCollisionEnvGeneric(temp_config)
+    else:
+        tmp_env = MARLCollisionEnv(temp_config)
+    total_num_agents = len(tmp_env.possible_agents)
+    del tmp_env
+    print(f"Total number of agents in scenario: {total_num_agents}")
+
     # Setup progress CSV logging in the same timestamped directory
     progress_csv = os.path.join(results_dir, "training_progress.csv")
     if not os.path.exists(progress_csv):
         with open(progress_csv, "w", newline="") as f:
             csv.writer(f).writerow(
-                ["ts", "iter", "steps_sampled", "episodes", "reward_mean", "zero_conflict_streak"]
+                ["ts", "iter", "steps_sampled", "episodes", "reward_mean", "zero_conflict_streak", "perfect_streak"]
             )
 
     steps = 0
     it = 0
     total_episodes = 0
     best_reward = float('-inf')  # Track best reward for improved checkpointing
+    
+    # Perfect episode tracking (all agents reach waypoints safely)
+    perfect_episode_streak = 0  # Consecutive iterations with perfect episodes
+    PERFECT_STREAK_TARGET = 5  # Stop training after 5 consecutive perfect iterations
     
     # Band-based early stopping parameters
     BAND_STEPS = int(os.environ.get("BAND_STEPS", 8200))
@@ -608,6 +652,8 @@ def train_frozen(repo_root: str,
 
         # Was the last episode conflict-free?
         conflict_free_ep = False
+        all_agents_reached_wp = False
+        wp_hits = 0
         try:
             traj_dir = results_dir  # use the timestamped directory you passed to the env
             traj_files = [os.path.join(traj_dir, f) for f in os.listdir(traj_dir) if f.startswith("traj_ep")]
@@ -619,6 +665,16 @@ def train_frozen(repo_root: str,
                     last_ep = df["episode_id"].max()
                     last_ep_data = df[df["episode_id"] == last_ep]
                     conflict_free_ep = (last_ep_data["conflict_flag"].sum() == 0)
+                    
+                    # Check waypoint hits for the last episode
+                    if "waypoint_reached" in last_ep_data.columns:
+                        # Count unique agents who reached waypoint in this episode
+                        wp_hits = last_ep_data[last_ep_data["waypoint_reached"] == 1]["agent_id"].nunique()
+                    else:
+                        # Fallback: count unique agents who were within 5 NM at any point
+                        wp_hits = last_ep_data[last_ep_data["wp_dist_nm"] <= 5.0]["agent_id"].nunique()
+                    
+                    all_agents_reached_wp = (wp_hits == total_num_agents)
                 else:
                     # Fallback: check entire file if no episode_id column
                     conflict_free_ep = (df["conflict_flag"].sum() == 0)
@@ -628,6 +684,10 @@ def train_frozen(repo_root: str,
             pass
 
         zero_conflict_streak = zero_conflict_streak + 1 if conflict_free_ep else 0
+        
+        # Check for perfect episode (all agents reached waypoints safely with no conflicts)
+        is_perfect_episode = conflict_free_ep and all_agents_reached_wp
+        perfect_episode_streak = perfect_episode_streak + 1 if is_perfect_episode else 0
         
         # Update band counters
         band_eps += episodes_this_iter
@@ -645,9 +705,21 @@ def train_frozen(repo_root: str,
         
         # Console line you can actually see
         rew_str = "None" if rew is None else f"{rew:.3f}"
+        perfect_str = f"✓ {perfect_episode_streak}/{PERFECT_STREAK_TARGET}" if is_perfect_episode else f"✗ 0/{PERFECT_STREAK_TARGET}"
         print(f"[{it:04d}] steps={steps:,} eps_iter={eps_this_iter} episodes={total_episodes} "
               f"reward_mean={rew_str} throughput={steps_sec:.1f} steps/s workers={num_workers} "
-              f"zero_conf_streak={zero_conflict_streak}", flush=True)
+              f"zero_conf_streak={zero_conflict_streak} wp_hits={wp_hits}/{total_num_agents} perfect={perfect_str}", flush=True)
+        
+        # Early stopping: perfect episodes (all agents reach waypoints safely) for 5 consecutive iterations
+        if perfect_episode_streak >= PERFECT_STREAK_TARGET:
+            print(f"\n🎉 PERFECT TRAINING ACHIEVED!")
+            print(f"   All {total_num_agents} agents reached waypoints safely for {PERFECT_STREAK_TARGET} consecutive iterations.")
+            print(f"   Training completed at iteration {it} with {steps:,} steps.")
+            # Save a special "perfect" checkpoint
+            temp_models_dir = os.path.join(results_dir, "checkpoints")
+            os.makedirs(temp_models_dir, exist_ok=True)
+            algo_obj.save(os.path.join(temp_models_dir, f"perfect_{steps}"))
+            break
         
         # Band boundary check and early stopping
         if steps >= next_band:
@@ -687,29 +759,10 @@ def train_frozen(repo_root: str,
                     ep_data = df[df["episode_id"] == last_ep]
                     avg_min_sep = ep_data["min_separation_nm"].mean()
                     
-                    # Debug: print available columns (disabled)
-                    # if it == 1:  # Only print for first iteration
-                    #     print(f"Debug: CSV columns available: {list(df.columns)}")
-                    
-                    # Better waypoint hit calculation using waypoint_reached flag
-                    if "waypoint_reached" in ep_data.columns:
-                        # Count unique agents who reached waypoint in this episode
-                        agents_reached = ep_data[ep_data["waypoint_reached"] == 1]["agent_id"].nunique()
-                        wp_hits = agents_reached
-                        
-                        # Additional debug info (disabled)
-                        # if it == 1:
-                        #     reached_flags = ep_data["waypoint_reached"].sum()
-                        #     print(f"Debug: waypoint_reached flags: {reached_flags}, unique agents reached: {wp_hits}")
-                    else:
-                        # Fallback: count unique agents who were within 5 NM at any point
-                        agents_near_wp = ep_data[ep_data["wp_dist_nm"] <= 5.0]["agent_id"].nunique()
-                        wp_hits = agents_near_wp
-                        # print(f"Debug: Using fallback wp_hits calculation: {wp_hits}")
-                    
+                    # wp_hits already calculated above, just use it for reporting
                     rt_mean = float(ep_data.get("reward_team", pd.Series([0])).mean())
                     td_mean = float(ep_data.get("team_dphi", pd.Series([0])).mean())
-                    print(f"Last episode {last_ep}: avg_min_sep={avg_min_sep:.2f}, wp_hits={wp_hits}, "
+                    print(f"Last episode {last_ep}: avg_min_sep={avg_min_sep:.2f}, wp_hits={wp_hits}/{total_num_agents}, "
                           f"reward_team_mean={rt_mean:.6f}, team_dphi_mean={td_mean:.6f}")
                 else:
                     pass  # print("Debug: No valid episode data found in trajectory file")
@@ -722,7 +775,7 @@ def train_frozen(repo_root: str,
 
         # Append to CSV
         with open(progress_csv, "a", newline="") as f:
-            csv.writer(f).writerow([int(time.time()), it, steps, total_episodes, rew, zero_conflict_streak])
+            csv.writer(f).writerow([int(time.time()), it, steps, total_episodes, rew, zero_conflict_streak, perfect_episode_streak])
 
         # Save checkpoint when reward improves significantly
         current_reward = float(rew if isinstance(rew, (int, float)) else float('-inf'))
@@ -771,8 +824,11 @@ def train_frozen(repo_root: str,
         "timestamp": timestamp,
         "final_steps": steps,
         "total_episodes": total_episodes,
+        "total_num_agents": total_num_agents,
         "best_reward": best_reward,
         "zero_conflict_streak": zero_conflict_streak,
+        "perfect_episode_streak": perfect_episode_streak,
+        "achieved_perfect_training": perfect_episode_streak >= PERFECT_STREAK_TARGET,
         "gpu_used": use_gpu,
         "training_duration_iterations": it,
     }
@@ -786,6 +842,9 @@ def train_frozen(repo_root: str,
     print(f"Training results: {results_dir}")
     print(f"Best reward achieved: {best_reward:.2f}")
     print(f"Final conflict-free streak: {zero_conflict_streak}")
+    print(f"Final perfect episode streak: {perfect_episode_streak}/{PERFECT_STREAK_TARGET}")
+    if perfect_episode_streak >= PERFECT_STREAK_TARGET:
+        print(f"✅ PERFECT TRAINING: All {total_num_agents} agents reached waypoints safely!")
     if use_gpu:
         print(f"Training completed using GPU acceleration")
     print(f"Training metadata saved: training_metadata.json")

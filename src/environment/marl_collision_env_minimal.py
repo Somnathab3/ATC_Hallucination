@@ -32,6 +32,10 @@ import bluesky as bs
 D_HEADING = 18.0   # Max heading change per action (deg)
 D_VELOCITY = 10.0  # Max speed change per action (kt)
 
+# Action threshold - ignore micro-actions below these values
+ACTION_THRESHOLD_DEG = 3.0  # Minimum heading change to apply (deg)
+ACTION_THRESHOLD_KT = 3.0   # Minimum speed change to apply (kt)
+
 # Team coordination reward parameters (PBRS)
 DEFAULT_TEAM_COORDINATION_WEIGHT = 0.2
 DEFAULT_TEAM_GAMMA = 0.99
@@ -595,6 +599,12 @@ class MARLCollisionEnv(ParallelEnv):
             
             dh = float(a[0]) * D_HEADING     # heading change in degrees
             dv = float(a[1]) * D_VELOCITY    # speed change in knots
+            
+            # Apply action thresholds - ignore micro-actions
+            if abs(dh) < ACTION_THRESHOLD_DEG:
+                dh = 0.0
+            if abs(dv) < ACTION_THRESHOLD_KT:
+                dv = 0.0
 
             idx = bs.traf.id2idx(aid)
             if not (isinstance(idx, int) and idx >= 0):

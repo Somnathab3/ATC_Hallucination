@@ -101,6 +101,96 @@ def diamond_points(lat: float, lon: float, size_nm: float) -> List[Tuple[float, 
     ]
 
 
+# --------------- TCPA/DCPA calculation ---------------
+
+def calculate_tcpa_dcpa_point(ag1: Dict[str, Any], ag2: Dict[str, Any], Th: float = 300.0) -> Tuple[float, float, float, float, float]:
+    """
+    Calculate TCPA, DCPA, and the CPA location for two aircraft.
+    Returns: (tcpa_s, dcpa_nm, cpa_lat, cpa_lon, initial_sep_nm)
+    """
+    lat1, lon1, hdg1, spd1 = float(ag1["lat"]), float(ag1["lon"]), float(ag1["hdg_deg"]), float(ag1["spd_kt"])
+    lat2, lon2, hdg2, spd2 = float(ag2["lat"]), float(ag2["lon"]), float(ag2["hdg_deg"]), float(ag2["spd_kt"])
+    
+    # Calculate relative position in NM
+    mean_lat = (lat1 + lat2) / 2.0
+    rx_nm = (lon2 - lon1) * 60.0 * math.cos(math.radians(mean_lat))
+    ry_nm = (lat2 - lat1) * 60.0
+    
+    # Calculate velocities in NM/s
+    spd1_nm_s = spd1 / 3600.0
+    spd2_nm_s = spd2 / 3600.0
+    
+    vx1 = spd1_nm_s * math.sin(math.radians(hdg1))
+    vy1 = spd1_nm_s * math.cos(math.radians(hdg1))
+    vx2 = spd2_nm_s * math.sin(math.radians(hdg2))
+    vy2 = spd2_nm_s * math.cos(math.radians(hdg2))
+    
+    # Relative velocity
+    vx_nm_s = vx2 - vx1
+    vy_nm_s = vy2 - vy1
+    
+    v_mag_sq = vx_nm_s**2 + vy_nm_s**2
+    
+    initial_sep = math.sqrt(rx_nm**2 + ry_nm**2)
+    
+    if v_mag_sq < 1e-10:
+        return 0.0, initial_sep, lat1, lon1, initial_sep
+    
+    # TCPA calculation
+    r_dot_v = rx_nm * vx_nm_s + ry_nm * vy_nm_s
+    tcpa_s = max(0.0, min(Th, -r_dot_v / v_mag_sq))
+    
+    # Position of aircraft 1 at CPA
+    cpa1_e_nm = vx1 * tcpa_s
+    cpa1_n_nm = vy1 * tcpa_s
+    cpa1_lat = lat1 + cpa1_n_nm / 60.0
+    cpa1_lon = lon1 + cpa1_e_nm / (60.0 * math.cos(math.radians(lat1)))
+    
+    # Position of aircraft 2 at CPA
+    cpa2_e_nm = vx2 * tcpa_s
+    cpa2_n_nm = vy2 * tcpa_s
+    cpa2_lat = lat2 + cpa2_n_nm / 60.0
+    cpa2_lon = lon2 + cpa2_e_nm / (60.0 * math.cos(math.radians(lat2)))
+    
+    # DCPA calculation
+    dcpa_nm = latlon_distance_nm(cpa1_lat, cpa1_lon, cpa2_lat, cpa2_lon)
+    
+    # CPA midpoint (collision point)
+    cpa_lat = (cpa1_lat + cpa2_lat) / 2.0
+    cpa_lon = (cpa1_lon + cpa2_lon) / 2.0
+    
+    return tcpa_s, dcpa_nm, cpa_lat, cpa_lon, initial_sep
+
+
+def add_cpa_markers(fig: go.Figure, scen: Dict[str, Any]):
+    """Add CPA (collision point) markers for all conflicting aircraft pairs."""
+    agents = scen.get("agents", [])
+    n_agents = len(agents)
+    
+    for i in range(n_agents):
+        for j in range(i + 1, n_agents):
+            tcpa_s, dcpa_nm, cpa_lat, cpa_lon, initial_sep = calculate_tcpa_dcpa_point(agents[i], agents[j])
+            
+            # Only show CPA if it's a conflict (DCPA < 5 NM) and TCPA is reasonable
+            if dcpa_nm < 5.0 and 0 < tcpa_s < 300:
+                # Add CPA marker (red X)
+                fig.add_trace(go.Scatter(
+                    x=[cpa_lon], y=[cpa_lat], mode="markers",
+                    marker=dict(size=18, color="red", symbol="x", line=dict(width=3, color="darkred")),
+                    showlegend=False, hoverinfo="skip", name=f"CPA-{agents[i]['id']}-{agents[j]['id']}"
+                ))
+                
+                # Add CPA label
+                fig.add_annotation(
+                    x=cpa_lon, y=cpa_lat,
+                    text=f"<b style='font-size:18px'>CPA</b><br><span style='font-size:15px'>{agents[i]['id']}-{agents[j]['id']}<br>DCPA: {dcpa_nm:.2f} NM<br>TCPA: {tcpa_s:.0f} s</span>",
+                    showarrow=True, arrowhead=2, arrowsize=1, arrowwidth=2, arrowcolor="red",
+                    ax=25, ay=-35,
+                    bgcolor="#FFE5E5", bordercolor="red", borderwidth=2.5, opacity=0.95,
+                    font=dict(size=16, family="Arial, sans-serif", color="darkred", weight="bold")
+                )
+
+
 # --------------- drawing helpers ---------------
 COLORS = ["#2E86DE", "#10AC84", "#EE5253", "#F39C12", "#8E44AD", "#16A085"]
 
@@ -126,11 +216,11 @@ def _add_heading(fig: go.Figure, lat: float, lon: float, hdg: float, length_nm: 
 def _add_path(fig: go.Figure, lat: float, lon: float, wp_lat: float, wp_lon: float, color: str) -> float:
     d = latlon_distance_nm(lat, lon, wp_lat, wp_lon)
     fig.add_trace(go.Scatter(x=[lon, wp_lon], y=[lat, wp_lat], mode="lines",
-                             line=dict(width=2, dash="dash", color=color), showlegend=False, hoverinfo="skip"))
+                             line=dict(width=2.5, dash="dash", color=color), showlegend=False, hoverinfo="skip"))
     # midpoint label
     mlon, mlat = (lon + wp_lon) / 2.0, (lat + wp_lat) / 2.0
-    fig.add_annotation(x=mlon, y=mlat, text=f"{d:.1f} NM", showarrow=False,
-                       font=dict(size=14, family="Arial, sans-serif"), bgcolor="white", bordercolor=color, borderwidth=2, opacity=0.95)
+    fig.add_annotation(x=mlon, y=mlat, text=f"<b style='font-size:20px'>{d:.1f} NM</b>", showarrow=False,
+                       font=dict(size=18, family="Arial, sans-serif"), bgcolor="white", bordercolor=color, borderwidth=2.5, opacity=0.96)
     return d
 
 
@@ -195,11 +285,11 @@ def add_aircraft(fig: go.Figure, ag: Dict[str, Any], color: str, center_lat: flo
     e_nm, n_nm, xa, ya = _label_offset(center_lat, center_lon, lat, lon, info_gap_nm)
     fig.add_annotation(
         x=lon + nm_to_lon(e_nm, lat), y=lat + nm_to_lat(n_nm),
-        text=(f"<b>{ag['id']}</b><br>HDG: {hdg:.0f}°<br>SPD: {ag['spd_kt']:.0f} kt"
-              f"<br>ALT: {ag['alt_ft']:.0f} ft"),
+        text=(f"<b style='font-size:22px'>{ag['id']}</b><br><span style='font-size:18px'>HDG: {hdg:.0f}°<br>SPD: {ag['spd_kt']:.0f} kt"
+              f"<br>ALT: {ag['alt_ft']:.0f} ft</span>"),
         showarrow=False, xanchor=xa, yanchor=ya,
-        bgcolor="white", bordercolor="#222", borderwidth=2, opacity=0.95,
-        font=dict(size=16, family="Arial, sans-serif"))
+        bgcolor="white", bordercolor="#222", borderwidth=2.5, opacity=0.96,
+        font=dict(size=18, family="Arial, sans-serif", weight="bold"))
 
 
 def add_waypoint(fig: go.Figure, ag: Dict[str, Any], color: str, center_lat: float, center_lon: float,
@@ -209,20 +299,20 @@ def add_waypoint(fig: go.Figure, ag: Dict[str, Any], color: str, center_lat: flo
     wp_lat = float(ag["waypoint"]["lat"]) ; wp_lon = float(ag["waypoint"]["lon"])
     aircraft_lat = float(ag["lat"]) ; aircraft_lon = float(ag["lon"])
     
-    _add_polygon(fig, diamond_points(wp_lat, wp_lon, size_nm), color, f"WP-{ag['id']}", opacity=0.65, lw=1.2)
+    _add_polygon(fig, diamond_points(wp_lat, wp_lon, size_nm), color, f"WP-{ag['id']}", opacity=0.65, lw=1.5)
     fig.add_trace(go.Scatter(x=[wp_lon], y=[wp_lat], mode="markers",
-                             marker=dict(size=7, color="white", line=dict(width=1, color="#111")),
+                             marker=dict(size=9, color="white", line=dict(width=1.5, color="#111")),
                              showlegend=False, hoverinfo="skip"))
     
     # Use specialized waypoint offset to avoid aircraft label collision
     e_nm, n_nm, xa, ya = _waypoint_label_offset(center_lat, center_lon, wp_lat, wp_lon, 
-                                               aircraft_lat, aircraft_lon, info_gap_nm * 0.8,
+                                               aircraft_lat, aircraft_lon, info_gap_nm * 1.2,
                                                all_aircraft_positions)
     fig.add_annotation(x=wp_lon + nm_to_lon(e_nm, wp_lat), y=wp_lat + nm_to_lat(n_nm),
-                       text=f"<b>WP-{ag['id']}</b><br>LAT: {wp_lat:.3f}°<br>LON: {wp_lon:.3f}°",
+                       text=f"<b style='font-size:20px'>WP-{ag['id']}</b><br><span style='font-size:16px'>LAT: {wp_lat:.3f}°<br>LON: {wp_lon:.3f}°</span>",
                        showarrow=False, xanchor=xa, yanchor=ya,
-                       bgcolor=color, bordercolor="#222", borderwidth=2, opacity=0.9,
-                       font=dict(size=15, color="white", family="Arial, sans-serif"))
+                       bgcolor=color, bordercolor="#222", borderwidth=2.5, opacity=0.92,
+                       font=dict(size=18, color="white", family="Arial, sans-serif", weight="bold"))
 
 
 def add_radar_rings(fig: go.Figure, center_lat: float, center_lon: float, radii_nm=(5, 10, 15, 20)):
@@ -234,10 +324,10 @@ def add_radar_rings(fig: go.Figure, center_lat: float, center_lon: float, radii_
             xs.append(center_lon + nm_to_lon(e_nm, center_lat))
             ys.append(center_lat + nm_to_lat(n_nm))
         fig.add_trace(go.Scatter(x=xs, y=ys, mode="lines",
-                                 line=dict(color="#C9D3E0", width=1), showlegend=False, hoverinfo="skip"))
+                                 line=dict(color="#C9D3E0", width=1.5), showlegend=False, hoverinfo="skip"))
         # ring label
         fig.add_annotation(x=center_lon + nm_to_lon(r, center_lat), y=center_lat,
-                           text=f"{r} NM", showarrow=False, font=dict(size=13, color="#5A6C85", family="Arial, sans-serif"))
+                           text=f"<b>{r} NM</b>", showarrow=False, font=dict(size=16, color="#5A6C85", family="Arial, sans-serif", weight="bold"))
 
 
 # --------------- main fig ---------------
@@ -271,7 +361,7 @@ def _symbol_sizes(scen: Dict[str, Any]) -> Tuple[float, float]:
     return tri, gap
 
 
-def make_figure(scen: Dict[str, Any], add_rings: bool = True) -> go.Figure:
+def make_figure(scen: Dict[str, Any], add_rings: bool = True, include_title: bool = True, include_metadata: bool = True) -> go.Figure:
     center = scen.get("center", {"lat": CENTER_LAT_DEFAULT, "lon": 4.0})
     center_lat, center_lon = float(center["lat"]), float(center["lon"])
 
@@ -296,6 +386,10 @@ def make_figure(scen: Dict[str, Any], add_rings: bool = True) -> go.Figure:
         add_waypoint(fig, ag, color, center_lat, center_lon, size_nm=max(0.9, tri_nm * 0.45), info_gap_nm=gap_nm, all_aircraft_positions=all_aircraft_positions)
         add_aircraft(fig, ag, color, center_lat, center_lon, sym_size_nm=tri_nm, info_gap_nm=gap_nm)
 
+    # Add CPA markers for conflicts
+    # Commented out to prevent overlapping with main scenario details
+    # add_cpa_markers(fig, scen)
+
     # center marker & rings
     fig.add_trace(go.Scatter(x=[center_lon], y=[center_lat], mode="markers",
                              marker=dict(size=8, color="#111"), showlegend=False, hoverinfo="skip"))
@@ -308,45 +402,53 @@ def make_figure(scen: Dict[str, Any], add_rings: bool = True) -> go.Figure:
     if len(notes) > 160:
         notes = notes[:160] + "…"
 
+    # Conditional title and margins for LaTeX figures
+    if include_title:
+        title_text = f"<b style='font-size:36px'>{title_name}</b><br><span style='font-size:22px'>{notes}</span>"
+        top_margin = 140
+    else:
+        title_text = None
+        top_margin = 50
+
     fig.update_layout(
         title=dict(
-            text=f"<b style='font-size:28px'>{title_name}</b><br><span style='font-size:18px'>{notes}</span>", 
+            text=title_text, 
             x=0.5,
             font=dict(family="Arial, sans-serif")
-        ),
+        ) if include_title else None,
         template="plotly_white",
-        margin=dict(l=90, r=90, t=120, b=90),
-        width=1400, height=1000,
+        margin=dict(l=90, r=90, t=top_margin, b=90),
+        width=1600, height=1200,
         showlegend=False,
     )
 
     # axes: equal scale, soft grid
     fig.update_xaxes(
         title_text="Longitude (deg)", 
-        title_font=dict(size=18, family="Arial, sans-serif"),
-        tickfont=dict(size=14),
+        title_font=dict(size=22, family="Arial, sans-serif"),
+        tickfont=dict(size=18),
         gridcolor="#ECF0F4", 
         zeroline=False
     )
     fig.update_yaxes(
         title_text="Latitude (deg)", 
-        title_font=dict(size=18, family="Arial, sans-serif"),
-        tickfont=dict(size=14),
+        title_font=dict(size=22, family="Arial, sans-serif"),
+        tickfont=dict(size=18),
         gridcolor="#ECF0F4", 
         zeroline=False, 
         scaleanchor="x", 
         scaleratio=1
     )
 
-    # scenario metadata box (fixed in paper coords → won’t collide with axes)
-    if distances:
-        meta = (f"<b>Aircraft:</b> {len(scen.get('agents', []))}<br>"
-                f"<b>Avg Dist:</b> {sum(distances)/len(distances):.1f} NM<br>"
-                f"<b>Range:</b> {min(distances):.1f}-{max(distances):.1f} NM<br>"
-                f"<b>Seed:</b> {scen.get('seed','N/A')}")
+    # scenario metadata box (fixed in paper coords → won't collide with axes)
+    if distances and include_metadata:
+        meta = (f"<b style='font-size:20px'>Aircraft:</b><span style='font-size:18px'> {len(scen.get('agents', []))}</span><br>"
+                f"<b style='font-size:20px'>Avg Dist:</b><span style='font-size:18px'> {sum(distances)/len(distances):.1f} NM</span><br>"
+                f"<b style='font-size:20px'>Range:</b><span style='font-size:18px'> {min(distances):.1f}-{max(distances):.1f} NM</span><br>"
+                f"<b style='font-size:20px'>Seed:</b><span style='font-size:18px'> {scen.get('seed','N/A')}</span>")
         fig.add_annotation(xref="paper", yref="paper", x=0.01, y=0.99, xanchor="left", yanchor="top",
                            text=meta, showarrow=False, bgcolor="#E8F1FF", bordercolor="#9BB7E1",
-                           borderwidth=2, opacity=0.98, font=dict(size=14, family="Arial, sans-serif"))
+                           borderwidth=2.5, opacity=0.98, font=dict(size=18, family="Arial, sans-serif"))
 
     # viewport padding
     lat_min, lat_max, lon_min, lon_max = _bounds(scen)
@@ -392,10 +494,50 @@ def plot_dir(scen_dir: str | Path = "scenarios", out_dir: str | Path = "plots", 
     return res
 
 
+def create_individual_scenario_plots(scen_dir: str | Path = "scenarios", out_dir: str | Path = "plots") -> List[Tuple[str, Optional[str]]]:
+    """
+    Create high-resolution individual plots for each scenario.
+    Returns list of (html_path, png_path) tuples.
+    """
+    scenario_files = sorted(Path(scen_dir).glob("*.json"))
+    results = []
+    
+    out = Path(out_dir) / "individual_scenarios"
+    out.mkdir(parents=True, exist_ok=True)
+    
+    for scenario_file in scenario_files:
+        print(f"Creating individual plot for {scenario_file.name}...")
+        scen = load_scenario(scenario_file)
+        fig = make_figure(scen, add_rings=True, include_title=False, include_metadata=False)  # Clean for LaTeX
+        
+        scenario_name = scen.get("scenario_name", scenario_file.stem)
+        
+        # Save HTML
+        html_path = str(out / f"{scenario_name}.html")
+        fig.write_html(html_path, include_plotlyjs="cdn")
+        print(f"  ✓ Saved HTML: {html_path}")
+        
+        # Save PNG at high resolution for LaTeX (square aspect ratio)
+        png_path = None
+        try:
+            png_path = str(out / f"{scenario_name}.png")
+            # Square dimensions for better LaTeX layout at 0.47\linewidth
+            fig.write_image(png_path, width=1400, height=1400, scale=2.0)
+            print(f"  ✓ Saved PNG: {png_path}")
+        except Exception as e:
+            print(f"  ⚠ Could not save PNG: {e}")
+            png_path = None
+        
+        results.append((html_path, png_path))
+    
+    return results
+
+
 def create_combined_scenarios_plot(scen_dir: str | Path = "scenarios", out_dir: str | Path = "plots") -> Tuple[str, Optional[str]]:
     """
     Create a combined plot with all scenarios in separate subplots within a single figure.
-    Perfect for presentation slides showing all scenarios at once.
+    A4 layout: 3 scenarios in first row, 2 in second row.
+    Perfect for thesis papers and academic publications.
     """
     scenario_files = sorted(Path(scen_dir).glob("*.json"))
     num_scenarios = len(scenario_files)
@@ -403,15 +545,8 @@ def create_combined_scenarios_plot(scen_dir: str | Path = "scenarios", out_dir: 
     if num_scenarios == 0:
         raise ValueError(f"No scenario files found in {scen_dir}")
     
-    # Calculate subplot grid (prefer wider layout for presentations)
-    if num_scenarios <= 2:
-        rows, cols = 1, num_scenarios
-    elif num_scenarios <= 4:
-        rows, cols = 2, 2
-    elif num_scenarios <= 6:
-        rows, cols = 2, 3
-    else:
-        rows, cols = 3, 3
+    # Fixed layout for thesis: 3 columns, 2 rows (A4 landscape optimized)
+    rows, cols = 2, 3
     
     # Create subplot titles
     scenario_titles = []
@@ -422,28 +557,49 @@ def create_combined_scenarios_plot(scen_dir: str | Path = "scenarios", out_dir: 
         title_name = scen.get("scenario_name", file_path.stem).replace("_", " ").title()
         scenario_titles.append(title_name)
     
-    # Create subplots with individual titles
+    # Create subplots with individual titles - A4 layout optimized
+    # First row: 3 scenarios, Second row: 2 scenarios (centered)
+    specs = [
+        [{"type": "scatter"}, {"type": "scatter"}, {"type": "scatter"}],
+        [None, {"type": "scatter"}, {"type": "scatter"}]  # Center 2 scenarios in row 2
+    ]
+    
+    # Adjust specs if we have exactly 5 scenarios
+    if num_scenarios == 5:
+        specs = [
+            [{"type": "scatter"}, {"type": "scatter"}, {"type": "scatter"}],
+            [None, {"type": "scatter"}, {"type": "scatter"}]
+        ]
+    elif num_scenarios < 5:
+        # Adjust for fewer scenarios
+        specs = [[{"type": "scatter"}] * min(num_scenarios, 3) for _ in range(min(2, (num_scenarios + 2) // 3))]
+    
     fig = make_subplots(
         rows=rows, cols=cols,
-        subplot_titles=scenario_titles,
-        specs=[[{"type": "scatter"}] * cols for _ in range(rows)],
-        horizontal_spacing=0.08,
-        vertical_spacing=0.12
+        subplot_titles=scenario_titles[:num_scenarios],
+        specs=specs,
+        horizontal_spacing=0.10,
+        vertical_spacing=0.15
     )
     
-    # Process each scenario
+    # Process each scenario with A4 layout positioning
     for idx, (scen, title) in enumerate(zip(scenarios, scenario_titles)):
-        row = idx // cols + 1
-        col = idx % cols + 1
+        # Custom positioning for 3-2 layout
+        if idx < 3:  # First row: positions 0, 1, 2
+            row = 1
+            col = idx + 1
+        else:  # Second row: positions 3, 4 -> columns 2, 3 (centered)
+            row = 2
+            col = (idx - 3) + 2  # Start from column 2 to center
         
         # Get scenario data
         center = scen.get("center", {"lat": CENTER_LAT_DEFAULT, "lon": 4.0})
         center_lat, center_lon = float(center["lat"]), float(center["lon"])
         
-        # Calculate symbol sizes (smaller for combined view)
+        # Calculate symbol sizes (optimized for A4 thesis layout)
         tri_nm, gap_nm = _symbol_sizes(scen)
-        tri_nm *= 0.7  # Scale down for combined view
-        gap_nm *= 0.8
+        tri_nm *= 0.85  # Slightly larger for better visibility in thesis
+        gap_nm *= 0.9
         
         # Collect all aircraft positions for collision detection
         all_aircraft_positions = [(float(ag["lat"]), float(ag["lon"])) for ag in scen.get("agents", [])]
@@ -465,13 +621,13 @@ def create_combined_scenarios_plot(scen_dir: str | Path = "scenarios", out_dir: 
                     showlegend=False, hoverinfo="skip"
                 ), row=row, col=col)
                 
-                # Add distance label (smaller for combined view)
+                # Add distance label (thesis-optimized size)
                 mlon, mlat = (lon + wp_lon) / 2.0, (lat + wp_lat) / 2.0
                 fig.add_annotation(
-                    x=mlon, y=mlat, text=f"{d:.1f} NM", 
+                    x=mlon, y=mlat, text=f"<b>{d:.1f} NM</b>", 
                     showarrow=False, xref=f"x{idx+1}", yref=f"y{idx+1}",
-                    font=dict(size=10, family="Arial, sans-serif"), 
-                    bgcolor="white", bordercolor=color, borderwidth=1, opacity=0.9
+                    font=dict(size=12, family="Arial, sans-serif"), 
+                    bgcolor="white", bordercolor=color, borderwidth=1.5, opacity=0.95
                 )
         
         # Add waypoints and aircraft
@@ -500,17 +656,17 @@ def create_combined_scenarios_plot(scen_dir: str | Path = "scenarios", out_dir: 
                     showlegend=False, hoverinfo="skip"
                 ), row=row, col=col)
                 
-                # Waypoint label (smaller for combined view)
+                # Waypoint label (clear and readable for thesis)
                 e_nm, n_nm, xa, ya = _waypoint_label_offset(
                     center_lat, center_lon, wp_lat, wp_lon, 
-                    lat, lon, gap_nm * 0.6, all_aircraft_positions
+                    lat, lon, gap_nm * 0.7, all_aircraft_positions
                 )
                 fig.add_annotation(
                     x=wp_lon + nm_to_lon(e_nm, wp_lat), y=wp_lat + nm_to_lat(n_nm),
                     text=f"<b>WP-{ag['id']}</b>", xref=f"x{idx+1}", yref=f"y{idx+1}",
                     showarrow=False, xanchor=xa, yanchor=ya,
-                    bgcolor=color, bordercolor="#222", borderwidth=1, opacity=0.85,
-                    font=dict(size=10, color="white", family="Arial, sans-serif")
+                    bgcolor=color, bordercolor="#222", borderwidth=1.5, opacity=0.9,
+                    font=dict(size=13, color="white", family="Arial, sans-serif", weight="bold")
                 )
             
             # Aircraft triangle
@@ -533,15 +689,15 @@ def create_combined_scenarios_plot(scen_dir: str | Path = "scenarios", out_dir: 
                 showlegend=False, hoverinfo="skip"
             ), row=row, col=col)
             
-            # Aircraft label (smaller for combined view)
+            # Aircraft label (enhanced readability for thesis)
             e_nm, n_nm, xa, ya = _label_offset(center_lat, center_lon, lat, lon, gap_nm)
             fig.add_annotation(
                 x=lon + nm_to_lon(e_nm, lat), y=lat + nm_to_lat(n_nm),
-                text=f"<b>{ag['id']}</b><br>HDG: {hdg:.0f}°<br>SPD: {ag['spd_kt']:.0f} kt",
+                text=f"<b style='font-size:14px'>{ag['id']}</b><br><span style='font-size:11px'>HDG: {hdg:.0f}°<br>SPD: {ag['spd_kt']:.0f} kt</span>",
                 xref=f"x{idx+1}", yref=f"y{idx+1}",
                 showarrow=False, xanchor=xa, yanchor=ya,
-                bgcolor="white", bordercolor="#222", borderwidth=1, opacity=0.95,
-                font=dict(size=11, family="Arial, sans-serif")
+                bgcolor="white", bordercolor="#222", borderwidth=1.5, opacity=0.97,
+                font=dict(size=12, family="Arial, sans-serif")
             )
         
         # Add center marker
@@ -572,52 +728,62 @@ def create_combined_scenarios_plot(scen_dir: str | Path = "scenarios", out_dir: 
         
         fig.update_xaxes(
             range=[lon_min - pad_lon, lon_max + pad_lon],
-            title_text="Longitude" if row == rows else "",
-            title_font=dict(size=12),
-            tickfont=dict(size=10),
-            gridcolor="#F0F4F8",
+            title_text="Longitude (°)" if row == rows else "",
+            title_font=dict(size=14, family="Arial, sans-serif"),
+            tickfont=dict(size=11),
+            gridcolor="#E8EEF4",
+            showgrid=True,
             row=row, col=col
         )
         fig.update_yaxes(
             range=[lat_min - pad_lat, lat_max + pad_lat],
-            title_text="Latitude" if col == 1 else "",
-            title_font=dict(size=12),
-            tickfont=dict(size=10),
-            gridcolor="#F0F4F8",
+            title_text="Latitude (°)" if col == 2 else "",  # Center column for row 2
+            title_font=dict(size=14, family="Arial, sans-serif"),
+            tickfont=dict(size=11),
+            gridcolor="#E8EEF4",
+            showgrid=True,
             scaleanchor=f"x{idx+1}",
             scaleratio=1,
             row=row, col=col
         )
     
-    # Update overall layout
+    # Update overall layout - A4 optimized (297mm x 210mm landscape)
+    # A4 landscape at 300 DPI: 3508 x 2480 pixels
+    # Using slightly smaller for better rendering: 2970 x 2100 pixels (A4 at ~250 DPI)
     fig.update_layout(
         title=dict(
-            text="<b style='font-size:32px'>ATC Collision Avoidance Scenarios</b><br><span style='font-size:20px'>Multi-Agent Reinforcement Learning Test Cases</span>",
+            text="<b style='font-size:28px'>Multi-Agent Air Traffic Collision Avoidance Scenarios</b><br><span style='font-size:16px'>MARL Training and Evaluation Test Cases</span>",
             x=0.5,
             font=dict(family="Arial, sans-serif")
         ),
         template="plotly_white",
-        margin=dict(l=80, r=80, t=140, b=80),
-        width=1600, height=1200,
+        margin=dict(l=70, r=70, t=130, b=90),
+        width=2970,  # A4 landscape width
+        height=2100,  # A4 landscape height
         showlegend=False,
+        paper_bgcolor="white",
+        plot_bgcolor="white"
     )
     
-    # Update subplot titles with larger fonts
-    fig.update_annotations(font=dict(size=16, family="Arial, sans-serif"))
+    # Update subplot titles with enhanced fonts for thesis
+    fig.update_annotations(font=dict(size=18, family="Arial, sans-serif", color="#1a1a1a"))
     
     # Save the combined plot
     out = Path(out_dir)
     out.mkdir(parents=True, exist_ok=True)
     
-    html_path = str(out / "combined_scenarios_presentation.html")
+    html_path = str(out / "combined_scenarios_A4_thesis.html")
     fig.write_html(html_path, include_plotlyjs="cdn")
+    print(f"✓ Saved interactive HTML: {html_path}")
     
     png_path = None
     try:
-        png_path = str(out / "combined_scenarios_presentation.png")
-        fig.write_image(png_path, width=2000, height=1500, scale=2.5)
+        # A4 landscape at high resolution for thesis printing
+        png_path = str(out / "combined_scenarios_A4_thesis.png")
+        fig.write_image(png_path, width=2970, height=2100, scale=1.0)
+        print(f"✓ Saved A4 thesis PNG: {png_path}")
     except Exception as e:
-        print(f"Could not save PNG: {e}")
+        print(f"⚠ Could not save PNG (install kaleido: pip install kaleido): {e}")
         png_path = None
     
     return html_path, png_path
@@ -635,18 +801,25 @@ def plot_all_scenarios_combined(scen_dir: str | Path = "scenarios", out_dir: str
 if __name__ == "__main__":
     import argparse
     ap = argparse.ArgumentParser()
-    g = ap.add_mutually_exclusive_group()
-    g.add_argument("--file", type=str)
-    g.add_argument("--scenarios-dir", type=str, default="scenarios")
-    g.add_argument("--combined", action="store_true", help="Create combined plot with all scenarios")
-    ap.add_argument("--out", type=str, default="plots")
-    ap.add_argument("--no-png", action="store_true")
+    ap.add_argument("--file", type=str, help="Single scenario file to plot")
+    ap.add_argument("--scenarios-dir", type=str, default="scenarios", help="Directory containing scenario files")
+    ap.add_argument("--combined", action="store_true", help="Create combined plot with all scenarios")
+    ap.add_argument("--individual", action="store_true", help="Create individual high-res plots for each scenario")
+    ap.add_argument("--out", type=str, default="plots", help="Output directory")
+    ap.add_argument("--no-png", action="store_true", help="Skip PNG generation")
     args = ap.parse_args()
 
     if args.file:
         print(plot_file(args.file, args.out, png=not args.no_png))
     elif args.combined:
         print(create_combined_scenarios_plot(args.scenarios_dir, args.out))
+    elif args.individual:
+        results = create_individual_scenario_plots(args.scenarios_dir, args.out)
+        print(f"\n✓ Created {len(results)} individual scenario plots")
+        for html, png in results:
+            print(f"  - {html}")
+            if png:
+                print(f"    {png}")
     else:
         for o in plot_dir(args.scenarios_dir, args.out, png=not args.no_png):
             print(o)

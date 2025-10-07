@@ -1,0 +1,65 @@
+{
+  "scenario_name": "merge_3p1",
+  "seed": 42,
+  "notes": "MERGE | 3 inbound to center (15.0 NM); 1 far to side waypoint.",
+  "center": {
+    "lat": 51.0,
+    "lon": 13.7,
+    "alt_ft": 10000.0
+  },
+  "sim_dt_s": 1.0,
+  "agents": [
+    {
+      "id": "A1",
+      "type": "A320",
+      "lat": 50.55908982599516,
+      "lon": 13.823537010482411,
+      "hdg_deg": 350.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.0,
+        "lon": 13.7
+      }
+    },
+    {
+      "id": "A2",
+      "type": "A320",
+      "lat": 50.55228807586428,
+      "lon": 13.7,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.0,
+        "lon": 13.7
+      }
+    },
+    {
+      "id": "A3",
+      "type": "A320",
+      "lat": 50.75379806174695,
+      "lon": 13.63101757859091,
+      "hdg_deg": 10.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.0,
+        "lon": 13.7
+      }
+    },
+    {
+      "id": "A4",
+      "type": "A320",
+      "lat": 50.833333333333336,
+      "lon": 14.176704718719725,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.083333333333336,
+        "lon": 14.176704718719725
+      }
+    }
+  ]
+}

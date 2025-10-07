@@ -726,8 +726,8 @@ def main():
     
     # Scenario generation
     gen_parser = subparsers.add_parser("generate-scenarios", help="Generate scenario files")
-    gen_parser.add_argument("--scenario", "-s", action="append",
-                           help="Scenario type to generate (can be used multiple times)")
+    gen_parser.add_argument("--scenario", "-s", nargs="+",
+                           help="Scenario type(s) to generate (space-separated list)")
     gen_parser.add_argument("--all", action="store_true",
                            help="Generate all scenario types")
     gen_parser.add_argument("--params", type=str,
@@ -735,15 +735,15 @@ def main():
     
     # Training
     train_parser = subparsers.add_parser("train", help="Train models")
-    train_parser.add_argument("--scenario", "-s", action="append",
-                             help="Scenario to train on (can be used multiple times, or use 'all' for all scenarios)")
+    train_parser.add_argument("--scenario", "-s", nargs="+",
+                             help="Scenario(s) to train on (space-separated list, or use 'all' for all scenarios)")
     train_parser.add_argument("--algo", "-a", type=str, default="PPO",
                              help="Algorithm to use (PPO, SAC, IMPALA, CQL, APPO, or 'all' for all algorithms)")
     train_parser.add_argument("--timesteps", "-t", type=int, default=100000,
                              help="Number of training timesteps")
     train_parser.add_argument("--checkpoint-every", "-c", type=int,
                              help="Checkpoint frequency (default: timesteps/10)")
-    train_parser.add_argument("--gpu", action="store_true",
+    train_parser.add_argument("--gpu", "--use-gpu", action="store_true",
                              help="Enable GPU training (auto-detect if available)")
     train_parser.add_argument("--no-gpu", action="store_true",
                              help="Force CPU-only training")

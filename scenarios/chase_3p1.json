@@ -1,0 +1,65 @@
+{
+  "scenario_name": "chase_3p1",
+  "seed": 42,
+  "notes": "CHASE | 3 in-trail conflicting (6.0 NM spacing); 1 far on side lane (non-conflicting).",
+  "center": {
+    "lat": 51.0,
+    "lon": 13.7,
+    "alt_ft": 10000.0
+  },
+  "sim_dt_s": 1.0,
+  "agents": [
+    {
+      "id": "A1",
+      "type": "A320",
+      "lat": 50.7,
+      "lon": 13.7,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.2,
+        "lon": 13.7
+      }
+    },
+    {
+      "id": "A2",
+      "type": "A320",
+      "lat": 50.8,
+      "lon": 13.7,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.2,
+        "lon": 13.7
+      }
+    },
+    {
+      "id": "A3",
+      "type": "A320",
+      "lat": 50.9,
+      "lon": 13.7,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.2,
+        "lon": 13.7
+      }
+    },
+    {
+      "id": "A4",
+      "type": "A320",
+      "lat": 50.7,
+      "lon": 14.097253932266437,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.2,
+        "lon": 14.097253932266437
+      }
+    }
+  ]
+}

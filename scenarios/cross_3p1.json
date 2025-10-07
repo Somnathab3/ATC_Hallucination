@@ -1,0 +1,65 @@
+{
+  "scenario_name": "cross_3p1",
+  "seed": 42,
+  "notes": "CROSS | 3-leg intersection at center (15.0 NM); 1 far on side lane.",
+  "center": {
+    "lat": 51.0,
+    "lon": 13.7,
+    "alt_ft": 10000.0
+  },
+  "sim_dt_s": 1.0,
+  "agents": [
+    {
+      "id": "A1",
+      "type": "A320",
+      "lat": 50.75,
+      "lon": 13.7,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.25,
+        "lon": 13.7
+      }
+    },
+    {
+      "id": "A2",
+      "type": "A320",
+      "lat": 51.0,
+      "lon": 13.302746067733562,
+      "hdg_deg": 90.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.0,
+        "lon": 14.097253932266437
+      }
+    },
+    {
+      "id": "A3",
+      "type": "A320",
+      "lat": 51.0,
+      "lon": 14.097253932266437,
+      "hdg_deg": 270.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.0,
+        "lon": 13.302746067733562
+      }
+    },
+    {
+      "id": "A4",
+      "type": "A320",
+      "lat": 50.75,
+      "lon": 14.176704718719725,
+      "hdg_deg": 0.0,
+      "spd_kt": 250.0,
+      "alt_ft": 10000.0,
+      "waypoint": {
+        "lat": 51.2,
+        "lon": 14.176704718719725
+      }
+    }
+  ]
+}
