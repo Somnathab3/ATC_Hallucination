@@ -20,10 +20,10 @@ import ray
 import torch
 
 from ray.rllib.algorithms.ppo import PPOConfig
-from ray.rllib.algorithms.sac import SACConfig
-from ray.rllib.algorithms.impala import IMPALA, IMPALAConfig
-from ray.rllib.algorithms.cql import CQL, CQLConfig
-from ray.rllib.algorithms.appo import APPO, APPOConfig
+#from ray.rllib.algorithms.sac import SACConfig
+#from ray.rllib.algorithms.impala import IMPALA, IMPALAConfig
+#from ray.rllib.algorithms.cql import CQL, CQLConfig
+#from ray.rllib.algorithms.appo import APPO, APPOConfig
 from ray.rllib.env import ParallelPettingZooEnv
 from ray.tune.registry import register_env
 
@@ -443,7 +443,7 @@ def train_frozen(repo_root: str,
         
         algo_obj = SAC(config=config)
     elif algo.upper() == "IMPALA":
-        from ray.rllib.algorithms.impala import IMPALA
+        #from ray.rllib.algorithms.impala import IMPALA
         
         config = (
             IMPALAConfig()
