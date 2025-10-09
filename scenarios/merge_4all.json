@@ -1,7 +1,7 @@
 {
   "scenario_name": "merge_4all",
   "seed": 42,
-  "notes": "MERGE | 4 inbound to single waypoint (15.0 NM) with small angular spread.",
+  "notes": "MERGE | 4 inbound to single waypoint (50.0 NM) with 15\u00b0 angular spread (all starting 50 NM away).",
   "center": {
     "lat": 51.0,
     "lon": 13.7,
@@ -12,8 +12,8 @@
     {
       "id": "A1",
       "type": "A320",
-      "lat": 50.765076844803524,
-      "lon": 13.835868846850452,
+      "lat": 50.216922816011746,
+      "lon": 14.152896156168174,
       "hdg_deg": 340.0,
       "spd_kt": 250.0,
       "alt_ft": 10000.0,
@@ -25,8 +25,8 @@
     {
       "id": "A2",
       "type": "A320",
-      "lat": 50.55399175490354,
-      "lon": 13.762004450896523,
+      "lat": 50.169837751590215,
+      "lon": 13.815409871753698,
       "hdg_deg": 355.0,
       "spd_kt": 250.0,
       "alt_ft": 10000.0,
@@ -38,8 +38,8 @@
     {
       "id": "A3",
       "type": "A320",
-      "lat": 50.55399175490354,
-      "lon": 13.637995549103476,
+      "lat": 50.169837751590215,
+      "lon": 13.584590128246303,
       "hdg_deg": 5.0,
       "spd_kt": 250.0,
       "alt_ft": 10000.0,
@@ -51,8 +51,8 @@
     {
       "id": "A4",
       "type": "A320",
-      "lat": 50.765076844803524,
-      "lon": 13.564131153149546,
+      "lat": 50.216922816011746,
+      "lon": 13.247103843831825,
       "hdg_deg": 20.0,
       "spd_kt": 250.0,
       "alt_ft": 10000.0,

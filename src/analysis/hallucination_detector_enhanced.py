@@ -605,17 +605,35 @@ class HallucinationDetector:
 
     def _resolution_cm(self, trajectory: Dict[str, Any], G: List[Tuple[int, int]], 
                        matches: List[Tuple[int, int]], d_sep_nm: float, window_s: float) -> Dict[str, int]:
-        """Compute resolution success/failure for matched conflict windows."""
+        """Compute resolution success/failure for matched conflict windows.
+        
+        Returns both post-conflict separation (resolution) and during-conflict LoS metrics.
+        """
         pos_seq = trajectory.get("positions", [])
         T = len(pos_seq)
         window_steps = int(round(window_s / max(1e-6, self.action_period_s)))
         
-        tp_res = 0
-        fn_res = 0
+        tp_res = 0  # Conflicts that achieved post-conflict separation
+        fn_res = 0  # Conflicts that failed post-conflict separation
+        tp_los = 0  # Conflicts that avoided LoS during conflict window
+        fn_los = 0  # Conflicts with LoS during conflict window
         
         for g_idx, a_idx in matches:
             g_start, g_end = G[g_idx]
-            # FIXED: Check resolution in window after conflict end
+            
+            # NEW: Check if LoS occurred during the conflict window
+            conflict_window = pos_seq[g_start:g_end]
+            if conflict_window:
+                min_sep_during_conflict = self._min_hmd_window(conflict_window)
+                if min_sep_during_conflict < d_sep_nm:
+                    fn_los += 1  # LoS occurred during conflict - tactical failure
+                else:
+                    tp_los += 1  # LoS avoided during conflict - tactical success
+            else:
+                # Empty conflict window - treat as LoS (shouldn't happen normally)
+                fn_los += 1
+            
+            # EXISTING: Check resolution in window after conflict end
             check_start = g_end  
             check_end = min(T, g_end + window_steps)
             
@@ -646,7 +664,12 @@ class HallucinationDetector:
                 # Invalid window - treat as unresolved  
                 fn_res += 1
         
-        return {"tp_res": tp_res, "fn_res": fn_res}
+        return {
+            "tp_res": tp_res, 
+            "fn_res": fn_res,
+            "tp_los": tp_los,
+            "fn_los": fn_los
+        }
 
     def _min_hmd_window(self, window_steps: List[Dict[str, Tuple[float, float]]]) -> float:
         """Minimum horizontal miss distance within a window of position dicts."""
@@ -798,7 +821,16 @@ class HallucinationDetector:
 
         # Resolution efficiency using matched windows
         res_metrics = self._resolution_cm(trajectory, G, matches, d_sep_nm=sep_nm, window_s=self.res_window_s)
-        res_fail_rate = res_metrics["fn_res"] / max(1, res_metrics["tp_res"] + res_metrics["fn_res"])
+        
+        # FIXED: Return NaN when no matched events to judge (instead of 0.0)
+        # Distinguishes "no cases to judge" from "perfect resolution"
+        den_res = res_metrics["tp_res"] + res_metrics["fn_res"]
+        res_fail_rate = float(res_metrics["fn_res"] / den_res) if den_res > 0 else float("nan")
+        
+        # NEW: LoS failure rate - measures if minimum separation was violated during conflicts
+        # Distinguishes "avoided LoS entirely" from "had LoS but recovered"
+        den_los = res_metrics["tp_los"] + res_metrics["fn_los"]
+        los_fail_rate = float(res_metrics["fn_los"] / den_los) if den_los > 0 else float("nan")
 
         # Unwanted interventions: alerts that never matched any conflict
         unwanted_interventions = len(A) - len(used_A)
@@ -817,28 +849,55 @@ class HallucinationDetector:
         
         avg_lead_time = float(np.mean(lead_times)) if lead_times else 0.0
 
-        # FIXED: Action oscillation based on max action value exceedances (not sign flips)
-        # Count timesteps where any agent's action exceeds maximum values
-        max_hdg_deg = 18.0  # Maximum reasonable heading change (degrees)
-        max_spd_kt = 10.0   # Maximum reasonable speed change (knots)
-        
-        oscillations = 0
+        # FIXED: Oscillation detection using sign-flip rate + total variation (twitchiness)
+        # Collect per-step mean action magnitudes across all active agents
+        hdg_series = []
+        spd_series = []
         for t in range(T):
-            has_extreme_action = False
-            for aid, arr in actions_seq[t].items():
-                arr = np.asarray(arr).reshape(-1)
-                hdg_delta = abs(arr[0]) if len(arr) > 0 else 0.0
-                spd_delta = abs(arr[1]) if len(arr) > 1 else 0.0
-                
-                # Check if either heading or speed change exceeds maximum values
-                if hdg_delta > max_hdg_deg or spd_delta > max_spd_kt:
-                    has_extreme_action = True
-                    break
+            # Mean absolute command across active agents at this timestep
+            H = [abs(np.asarray(a).reshape(-1)[0]) for a in actions_seq[t].values() if len(np.asarray(a).reshape(-1)) > 0]
+            V = [abs(np.asarray(a).reshape(-1)[1]) for a in actions_seq[t].values() if len(np.asarray(a).reshape(-1)) > 1]
+            hdg_series.append(float(np.mean(H)) if H else 0.0)
+            spd_series.append(float(np.mean(V)) if V else 0.0)
+        
+        # (1) Sign-flip rate: how often heading command changes sign with non-trivial magnitude
+        def sign(x):
+            return (x > 0) - (x < 0)
+        
+        theta_h = 2.0  # Deadzone for heading (degrees)
+        theta_v = 1.0  # Deadzone for speed (knots)
+        sign_flips = 0
+        active_transitions = 0
+        
+        for t in range(1, T):
+            # Get mean signed heading command across agents (not absolute)
+            h0_vals = [float(np.asarray(a).reshape(-1)[0]) for a in actions_seq[t-1].values() if len(np.asarray(a).reshape(-1)) > 0]
+            h1_vals = [float(np.asarray(a).reshape(-1)[0]) for a in actions_seq[t].values() if len(np.asarray(a).reshape(-1)) > 0]
             
-            if has_extreme_action:
-                oscillations += 1
-                
-        oscillation_rate = oscillations / max(1, T)
+            m0 = float(np.mean(h0_vals)) if h0_vals else 0.0
+            m1 = float(np.mean(h1_vals)) if h1_vals else 0.0
+            
+            # Count as flip only if both timesteps have significant commands in opposite directions
+            if abs(m0) >= theta_h and abs(m1) >= theta_h:
+                if sign(m0) != sign(m1):
+                    sign_flips += 1
+                active_transitions += 1
+        
+        osc_rate_flips = float(sign_flips) / max(1, active_transitions)
+        
+        # (2) Total variation rate: normalized jitter in command sequences
+        if len(hdg_series) > 1:
+            tv_h = float(np.sum(np.abs(np.diff(hdg_series)))) / (18.0 * (len(hdg_series) - 1))
+        else:
+            tv_h = 0.0
+            
+        if len(spd_series) > 1:
+            tv_v = float(np.sum(np.abs(np.diff(spd_series)))) / (10.0 * (len(spd_series) - 1))
+        else:
+            tv_v = 0.0
+        
+        # Combined oscillation metric: blend sign-flip rate and total variation
+        oscillation_rate = 0.5 * (osc_rate_flips + (tv_h + tv_v) / 2.0)
 
         # Enhanced metrics
         los_metrics = self._detect_los_events(pos_seq)
@@ -851,6 +910,7 @@ class HallucinationDetector:
             "ghost_conflict": float(ghost),
             "missed_conflict": float(missed),
             "resolution_fail_rate": float(res_fail_rate),
+            "los_failure_rate": float(los_fail_rate),
             "oscillation_rate": float(oscillation_rate),
             "min_CPA_nm": float(min_cpa),
             "num_conflict_steps": int(num_conflict_steps),

@@ -5,8 +5,8 @@ ATC Hallucination Project - Unified CLI
 A comprehensive command-line interface for the ATC Hallucination project that provides:
 - Scenario generation with custom parameters
 - Model training with multiple algorithms
-- Distribution shift testing (unison and targeted)
-- Baseline vs shift matrix analysis (cross-scenario robustness testing)
+- Distribution shift testing (unison and intrashift)
+- Intershift matrix analysis (cross-scenario robustness testing)
 - Hallucination detection and analysis  
 - Visualization and reporting
 - Model evaluation and checkpoint management
@@ -25,11 +25,11 @@ Usage examples:
     
     # Run shift testing
     python atc_cli.py test-shifts --checkpoint latest --scenario parallel --episodes 5
-    python atc_cli.py test-shifts --targeted --episodes 3 --viz
+    python atc_cli.py test-shifts --intrashift --episodes 3 --viz
     
-    # Baseline vs shift matrix analysis (cross-scenario robustness testing)
-    python atc_cli.py baseline-vs-shift-matrix --episodes 5 --use-gpu
-    python atc_cli.py baseline-vs-shift-matrix --extensive --models-index models_config.json
+    # Intershift matrix analysis (cross-scenario robustness testing)
+    python atc_cli.py intershift-matrix --episodes 5 --use-gpu
+    python atc_cli.py intershift-matrix --extensive --models-index models_config.json
     
     # Analyze and visualize
     python atc_cli.py analyze --results-dir results_PPO_head_on_20250923_190203
@@ -222,7 +222,7 @@ class ATCController:
                     return None
             
             if targeted:
-                from src.testing.targeted_shift_tester import run_targeted_shift_grid
+                from src.testing.intrashift_tester import run_intrashift_grid
                 from ray.rllib.algorithms.ppo import PPO
                 from ray.rllib.algorithms.sac import SAC
                 
@@ -241,7 +241,7 @@ class ATCController:
                     outdir=outdir
                 )
                 
-                logger.info(f"Targeted shift testing completed: {result_path}")
+                logger.info(f"Intrashift testing completed: {result_path}")
                 return result_path
             else:
                 # Implement basic unison shift testing
@@ -256,16 +256,16 @@ class ATCController:
                                  episodes: int, generate_viz: bool, algo: str) -> Optional[str]:
         """Run unison shift testing (simplified implementation)."""
         try:
-            # For now, fall back to targeted shift testing with a warning
-            logger.warning("Unison shift testing not fully implemented. Running targeted shifts instead.")
+            # For now, fall back to intrashift testing with a warning
+            logger.warning("Unison shift testing not fully implemented. Running intrashift testing instead.")
             
-            from src.testing.targeted_shift_tester import run_targeted_shift_grid
+            from src.testing.intrashift_tester import run_intrashift_grid
             from ray.rllib.algorithms.ppo import PPO
             from ray.rllib.algorithms.sac import SAC
             
             algo_class = SAC if algo.upper() == "SAC" else PPO
             
-            result_path = run_targeted_shift_grid(
+            result_path = run_intrashift_grid(
                 repo_root=str(self.repo_root),
                 algo_class=algo_class,
                 checkpoint_path=checkpoint_path,
@@ -359,14 +359,14 @@ class ATCController:
             logger.error(f"Visualization failed: {e}")
             return []
     
-    def run_baseline_vs_shift_matrix(self, models_index: Optional[str] = None, models_dir: str = "models",
-                                     episodes: int = 5, outdir: str = "results_baseline_vs_shift",
-                                     use_gpu: bool = False, extensive: bool = False,
-                                     scenarios_dir: str = "scenarios") -> Optional[str]:
-        """Run baseline vs shift matrix analysis comparing trained models against scenario shifts."""
+    def run_intershift_matrix(self, models_index: Optional[str] = None, models_dir: str = "models",
+                             episodes: int = 5, outdir: str = "results_intershift",
+                             use_gpu: bool = False, extensive: bool = False,
+                             scenarios_dir: str = "scenarios") -> Optional[str]:
+        """Run intershift matrix analysis comparing trained models against scenario shifts."""
         try:
-            # Import the baseline_vs_shift_matrix module
-            from src.testing.baseline_vs_shift_matrix import main as run_matrix_analysis
+            # Import the intershift_matrix module
+            from src.testing.intershift_matrix import main as run_matrix_analysis
             import sys
             
             # Prepare arguments for the matrix analysis
@@ -388,17 +388,17 @@ class ATCController:
             
             # Save current sys.argv and replace with our arguments
             original_argv = sys.argv
-            sys.argv = ["baseline_vs_shift_matrix.py"] + matrix_args
+            sys.argv = ["intershift_matrix.py"] + matrix_args
             
             try:
-                logger.info("🔬 Running baseline vs shift matrix analysis...")
+                logger.info("🔬 Running intershift matrix analysis...")
                 logger.info(f"Arguments: {' '.join(matrix_args)}")
                 
                 # Run the matrix analysis
                 run_matrix_analysis()
                 
-                result_path = str(self.repo_root / outdir / "baseline_vs_shift_summary.csv")
-                logger.info(f"✅ Baseline vs shift matrix analysis completed: {result_path}")
+                result_path = str(self.repo_root / outdir / "intershift_summary.csv")
+                logger.info(f"✅ Intershift matrix analysis completed: {result_path}")
                 return result_path
                 
             finally:
@@ -406,7 +406,7 @@ class ATCController:
                 sys.argv = original_argv
                 
         except Exception as e:
-            logger.error(f"Baseline vs shift matrix analysis failed: {e}")
+            logger.error(f"Intershift matrix analysis failed: {e}")
             return None
 
     def full_pipeline(self, scenario_name: str, algo: str = "PPO", 
@@ -760,8 +760,8 @@ def main():
                             help="Scenario for testing")
     test_parser.add_argument("--episodes", "-e", type=int, default=3,
                             help="Episodes per shift configuration")
-    test_parser.add_argument("--targeted", action="store_true", default=True,
-                            help="Use targeted shifts (vs unison). Default: True")
+    test_parser.add_argument("--intrashift", action="store_true", default=True,
+                            help="Use intrashift testing (vs unison). Default: True")
     test_parser.add_argument("--algo", "-a", choices=["PPO", "SAC"], default="PPO",
                             help="Algorithm type")
     test_parser.add_argument("--viz", action="store_true",
@@ -797,8 +797,8 @@ def main():
                                  help="Training timesteps")
     pipeline_parser.add_argument("--test-episodes", "-e", type=int, default=3,
                                  help="Testing episodes")
-    pipeline_parser.add_argument("--no-targeted", action="store_true",
-                                 help="Use unison shifts instead of targeted")
+    pipeline_parser.add_argument("--no-intrashift", action="store_true",
+                                 help="Use unison shifts instead of intrashift")
     pipeline_parser.add_argument("--no-viz", action="store_true",
                                  help="Skip visualization generation")
     pipeline_parser.add_argument("--log-trajectories", action="store_true",
@@ -806,8 +806,8 @@ def main():
     pipeline_parser.add_argument("--env-type", choices=["frozen", "generic"], default="frozen",
                                  help="Environment type: 'frozen' for scenario-based, 'generic' for dynamic conflicts")
     
-    # Baseline vs Shift Matrix testing
-    matrix_parser = subparsers.add_parser("baseline-vs-shift-matrix", 
+    # Intershift Matrix testing
+    matrix_parser = subparsers.add_parser("intershift-matrix", 
                                          help="Test trained models against scenario shifts for robustness analysis")
     matrix_parser.add_argument("--models-index", type=str,
                               help="JSON file with model mappings: {'models': {'alias': 'path', ...}, 'baselines': {...}}")
@@ -815,8 +815,8 @@ def main():
                               help="Directory containing model checkpoints (default: models)")
     matrix_parser.add_argument("--episodes", "-e", type=int, default=5,
                               help="Episodes per scenario test (default: 5)")
-    matrix_parser.add_argument("--outdir", type=str, default="results_baseline_vs_shift",
-                              help="Output directory for results (default: results_baseline_vs_shift)")
+    matrix_parser.add_argument("--outdir", type=str, default="results_intershift",
+                              help="Output directory for results (default: results_intershift)")
     matrix_parser.add_argument("--use-gpu", action="store_true",
                               help="Enable GPU acceleration for faster testing")
     matrix_parser.add_argument("--extensive", action="store_true",
@@ -903,7 +903,7 @@ def main():
                 checkpoint_path=args.checkpoint,
                 scenario_name=args.scenario,
                 episodes=args.episodes,
-                targeted=args.targeted,
+                targeted=args.intrashift,
                 generate_viz=args.viz,
                 algo=args.algo,
                 seeds=seeds,
@@ -937,8 +937,8 @@ def main():
             for file in files:
                 print(f"  {file}")
         
-        elif args.command == "baseline-vs-shift-matrix":
-            result = controller.run_baseline_vs_shift_matrix(
+        elif args.command == "intershift-matrix":
+            result = controller.run_intershift_matrix(
                 models_index=args.models_index,
                 models_dir=args.models_dir,
                 episodes=args.episodes,
@@ -948,14 +948,14 @@ def main():
                 scenarios_dir=args.scenarios_dir
             )
             if result:
-                print(f"Baseline vs shift matrix analysis completed: {result}")
+                print(f"Intershift matrix analysis completed: {result}")
                 print("\n📊 Generated comprehensive robustness analysis comparing trained models against scenario shifts.")
                 print("📁 Check the output directory for:")
-                print("  • baseline_vs_shift_summary.csv (Performance metrics)")
+                print("  • intershift_summary.csv (Performance metrics)")
                 print("  • summary_*.png (Visualization plots)")
                 print("  • Interactive trajectory visualizations")
             else:
-                print("Baseline vs shift matrix analysis failed.")
+                print("Intershift matrix analysis failed.")
                 sys.exit(1)
         
         elif args.command == "full-pipeline":
@@ -964,7 +964,7 @@ def main():
                 algo=args.algo,
                 train_timesteps=args.train_timesteps,
                 test_episodes=args.test_episodes,
-                targeted_shifts=not args.no_targeted,
+                targeted_shifts=not args.no_intrashift,
                 generate_viz=not args.no_viz,
                 log_trajectories=args.log_trajectories,
                 env_type=args.env_type

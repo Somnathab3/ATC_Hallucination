@@ -47,7 +47,7 @@ setup(
         "console_scripts": [
             "atc-train=train:main",
             "atc-test=test_shifts:main",
-            "atc-targeted-test=src.testing.targeted_shift_tester:main",
+            "atc-intrashift-test=src.testing.intrashift_tester:main",
             "atc-visualize=visualize_air_traffic:main",
         ],
     },

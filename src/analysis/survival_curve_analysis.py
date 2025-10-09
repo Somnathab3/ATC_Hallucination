@@ -58,13 +58,13 @@ class SurvivalCurveAnalyzer:
         for model_scenario_dir in model_scenario_dirs:
             dir_name = model_scenario_dir.name
             
-            # Parse directory name: PPO_model__on__scenario__baseline
+            # Parse directory name: PPO_model__on__scenario__baseline or PPO_model__on__scenario
             parts = dir_name.split("__on__")
             if len(parts) != 2:
                 continue
                 
-            model_alias = parts[0]  # e.g., "PPO_canonical_crossing" or "PPO_generic_20251004_023328"
-            scenario_part = parts[1]  # e.g., "canonical_crossing__baseline" or "converging" or "canonical_crossing__generic_shift"
+            model_alias = parts[0]  # e.g., "PPO_chase_2x2_20251008_015945" or "PPO_generic_20251008_225941"
+            scenario_part = parts[1]  # e.g., "chase_2x2__baseline" or "chase_3p1" or "chase_2x2__generic_shift"
             
             # Extract test scenario (remove suffix tags)
             if "__baseline" in scenario_part:
@@ -250,7 +250,19 @@ class SurvivalCurveAnalyzer:
             
             # Determine if this is the baseline model (frozen scenario-specific) or generic model
             is_generic = 'generic' in model_short.lower()
-            baseline_scenario = model_short.split('_')[0] if not is_generic else None
+            
+            # Extract training scenario from model name (e.g., "chase_2x2_20251008_015945" -> "chase_2x2")
+            # Models are named: PPO_{scenario}_{timestamp} or PPO_generic_{timestamp}
+            if not is_generic:
+                # Remove timestamp suffix (format: _YYYYMMDD_HHMMSS)
+                model_parts = model_short.rsplit('_', 2)  # Split from right: ['chase_2x2', '20251008', '015945']
+                if len(model_parts) >= 3 and model_parts[-2].isdigit() and model_parts[-1].isdigit():
+                    baseline_scenario = model_parts[0]  # e.g., "chase_2x2"
+                else:
+                    baseline_scenario = model_short  # Fallback if timestamp pattern not found
+            else:
+                baseline_scenario = None
+                
             is_baseline = (not is_generic and baseline_scenario == test_scenario)
             
             # Calculate survival function
@@ -372,7 +384,18 @@ class SurvivalCurveAnalyzer:
             
             model_short = model_alias.replace('PPO_', '')
             is_generic = 'generic' in model_short.lower()
-            baseline_scenario = model_short.split('_')[0] if not is_generic else None
+            
+            # Extract training scenario from model name (e.g., "chase_2x2_20251008_015945" -> "chase_2x2")
+            if not is_generic:
+                # Remove timestamp suffix (format: _YYYYMMDD_HHMMSS)
+                model_parts = model_short.rsplit('_', 2)  # Split from right
+                if len(model_parts) >= 3 and model_parts[-2].isdigit() and model_parts[-1].isdigit():
+                    baseline_scenario = model_parts[0]  # e.g., "chase_2x2"
+                else:
+                    baseline_scenario = model_short  # Fallback
+            else:
+                baseline_scenario = None
+                
             is_baseline = (not is_generic and baseline_scenario == test_scenario)
             
             # Calculate survival function

@@ -26,8 +26,8 @@ SYSTEM ARCHITECTURE AND DATA FLOW:
    └── Purpose: Learn collision avoidance policies with parameter sharing
 
 4. ROBUSTNESS TESTING (src.testing)
-   ├── targeted_shift_tester.py: Systematic distribution shift evaluation
-   ├── baseline_vs_shift_matrix.py: Comparative baseline analysis
+   ├── intrashift_tester.py: Systematic distribution shift evaluation (intrashift)
+   ├── intershift_matrix.py: Comparative cross-scenario analysis (intershift)
    ├── Inputs: Trained models from step 3, scenarios from step 1
    ├── Outputs: Performance matrices, shift test results
    └── Purpose: Evaluate policy robustness and identify failure modes

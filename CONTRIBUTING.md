@@ -127,7 +127,7 @@ Use clear, descriptive commit messages:
 
 ### New Shift Types
 
-1. Update `create_conflict_inducing_shifts()` in `targeted_shift_tester.py`
+1. Update `create_conflict_inducing_shifts()` in `intrashift_tester.py`
 2. Add handling in `create_targeted_shift()`
 3. Update environment to support new shift types
 4. Add comprehensive tests

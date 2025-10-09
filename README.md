@@ -345,7 +345,8 @@ python atc_cli.py train --scenario converging --algo SAC --timesteps 100000 --gp
 python atc_cli.py test-shifts --targeted --episodes 100 --viz
 
 # Baseline vs shift matrix (cross-scenario evaluation)
-python -m src.testing.baseline_vs_shift_matrix \
+```bash
+python -m src.testing.intershift_matrix \
   --models-dir models \
   --scenarios-dir scenarios \
   --episodes 100 \

@@ -200,7 +200,7 @@ def make_chase_4all(gap_nm: float = 6.0, south_nm: float = 18.0) -> str:
     return save("chase_4all", agents, f"CHASE | 4 in-trail with {gap_nm} NM gaps (all conflicting).")
 
 # ------------------ MERGE (small angle convergence), 4 agents ------------------
-def make_merge_2x2(radius_nm: float = 15.0, sep_dx_nm: float = 12.0) -> str:
+def make_merge_2x2(radius_nm: float = 50.0, sep_dx_nm: float = 15.0) -> str:
     """
     Two independent 2-aircraft merges, left and right of center (waypoints at ±sep_dx_nm east).
     Each pair merges to their own waypoint; spatially separated to avoid inter-pair conflicts.
@@ -208,27 +208,27 @@ def make_merge_2x2(radius_nm: float = 15.0, sep_dx_nm: float = 12.0) -> str:
     # Left pair - small angular spread
     wpL_lat, wpL_lon = pos_offset(CENTER_LAT, CENTER_LON, 0.0, -sep_dx_nm)
     left = [
-        _inbound_agent("A1", wpL_lat, wpL_lon, 350.0, radius_nm),
-        _inbound_agent("A2", wpL_lat, wpL_lon, 10.0, radius_nm),
+        _inbound_agent("A1", wpL_lat, wpL_lon, 352.5, radius_nm),
+        _inbound_agent("A2", wpL_lat, wpL_lon, 7.5, radius_nm),
     ]
     
     # Right pair - small angular spread
     wpR_lat, wpR_lon = pos_offset(CENTER_LAT, CENTER_LON, 0.0, +sep_dx_nm)
     right = [
-        _inbound_agent("A3", wpR_lat, wpR_lon, 170.0, radius_nm),
-        _inbound_agent("A4", wpR_lat, wpR_lon, 190.0, radius_nm),
+        _inbound_agent("A3", wpR_lat, wpR_lon, 172.5, radius_nm),
+        _inbound_agent("A4", wpR_lat, wpR_lon, 187.5, radius_nm),
     ]
     
     agents = enforce_min_start_sep(left + right, min_nm=5.1)
     return save("merge_2x2", agents, f"MERGE | two separate 2→1 merges (centers ±{sep_dx_nm} NM, {radius_nm} NM radius).")
 
-def make_merge_3p1(radius_nm: float = 15.0, far_dx_nm: float = 18.0) -> str:
+def make_merge_3p1(radius_nm: float = 50.0, far_dx_nm: float = 25.0) -> str:
     """
     Three-aircraft merge to center; one far cruiser (non-conflicting) to an offset waypoint.
     Central 3 create merge conflict; 4th is spatially separated.
     """
     wp_lat, wp_lon = CENTER_LAT, CENTER_LON
-    bearings = [350.0, 0.0, 10.0]  # 3 inbound with small angular spread
+    bearings = [345.0, 0.0, 15.0]  # 3 inbound with small angular spread
     agents = []
     for i, b in enumerate(bearings, start=1):
         agents.append(_inbound_agent(f"A{i}", wp_lat, wp_lon, b, radius_nm))
@@ -240,17 +240,18 @@ def make_merge_3p1(radius_nm: float = 15.0, far_dx_nm: float = 18.0) -> str:
     agents = enforce_min_start_sep(agents, min_nm=5.1)
     return save("merge_3p1", agents, f"MERGE | 3 inbound to center ({radius_nm} NM); 1 far to side waypoint.")
 
-def make_merge_4all(radius_nm: float = 15.0) -> str:
+def make_merge_4all(radius_nm: float = 50.0) -> str:
     """
     Four aircraft approaching the same waypoint from near-parallel bearings.
-    Small angular spread (-20°, -5°, +5°, +20° wrt North) creates merge conflict for all 4.
+    Small angular spread (340°, 355°, 5°, 20° - 15° increments) creates merge conflict for all 4.
+    All agents start 50 NM from waypoint to ensure conflict-free initial positions.
     """
     wp_lat, wp_lon = CENTER_LAT, CENTER_LON
     bearings = [340.0, 355.0, 5.0, 20.0]  # Inbound headings with 15° increments
     agents = [_inbound_agent(f"A{i+1}", wp_lat, wp_lon, bearings[i], radius_nm) for i in range(4)]
     
     agents = enforce_min_start_sep(agents, min_nm=5.1)
-    return save("merge_4all", agents, f"MERGE | 4 inbound to single waypoint ({radius_nm} NM) with small angular spread.")
+    return save("merge_4all", agents, f"MERGE | 4 inbound to single waypoint ({radius_nm} NM) with 15° angular spread (all starting 50 NM away).")
 
 # ------------------ CROSS (orthogonal), 4 agents ------------------
 def _cross_pair_at(aid_ns: str, aid_ew: str, center_n_nm: float, center_e_nm: float, radius_nm: float):

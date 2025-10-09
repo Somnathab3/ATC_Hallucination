@@ -300,7 +300,7 @@ def train_frozen(repo_root: str,
                   .framework("torch")  # Disable torch compilation to avoid GPU indexing issues
                   .api_stack(enable_rl_module_and_learner=False, enable_env_runner_and_connector_v2=False)
                   .env_runners(
-                      num_env_runners=4 if use_gpu else 2,  # Increased workers for better sample decorrelation
+                      num_env_runners=6 if use_gpu else 2,  # Increased workers for better sample decorrelation from 4 to 6
                       num_envs_per_env_runner=1,
                       rollout_fragment_length=200,
                       sample_timeout_s=300.0,

@@ -1,9 +1,10 @@
 """
 Module Name: train_generic.py
-Description: Simplified wrapper for training on generic dynamic conflict environment.
-             Provides optimized parameters for generic training scenarios.
+Description: Simplified wrapper for training on generic structured conflict scenarios.
+             Generates balanced mix of MERGE, CHASE, and CROSS scenarios with fixed
+             4-agent configurations for cross-scenario generalization.
 Author: Som
-Date: 2025-10-04
+Date: 2025-10-04 (Updated: 2025-10-08)
 """
 
 import os
@@ -25,10 +26,18 @@ def train_generic(repo_root: str,
                   log_trajectories: bool = False,
                   **kwargs) -> str:
     """
-    Train model on generic dynamic conflicts.
+    Train model on generic structured conflict scenarios.
     
-    Wrapper around train_frozen that configures generic environment with
-    appropriate parameters for dynamic conflict generation.
+    Wrapper around train_frozen that configures generic environment with balanced
+    scenario generation across MERGE, CHASE, and CROSS conflict types. All scenarios
+    use fixed 4-agent configurations (A1-A4) with consistent parameters:
+    - Fixed 4 agents per scenario
+    - Standard speed: 250 kt
+    - Standard altitude: 10000 ft
+    - Balanced distribution: merge_2x2, merge_3p1, chase_2x2, chase_3p1, cross_2x2, cross_3p1
+    
+    This enables the model to generalize across all three major conflict geometries
+    encountered in real air traffic scenarios.
     
     Args:
         repo_root: Project root directory path.

@@ -1,10 +1,10 @@
 """
 Module Name: marl_collision_env_generic.py
-Description: Generic MARL environment for air traffic collision avoidance with dynamic
-             conflict generation using BlueSky. Creates randomized scenarios each episode
-             for better training diversity compared to frozen scenarios.
+Description: Generic MARL environment for air traffic collision avoidance with structured
+             scenario generation (merge, chase, cross). Creates balanced conflict scenarios
+             each episode with fixed 4-agent configurations for better generalization.
 Author: Som
-Date: 2025-10-04
+Date: 2025-10-04 (Updated: 2025-10-08)
 """
 
 import os
@@ -57,13 +57,20 @@ class MARLCollisionEnvGeneric(ParallelEnv):
     """
     Generic MARL Environment for Air Traffic Collision Avoidance.
     
-    Dynamically generates conflict scenarios with randomized aircraft configurations,
-    geometries, and parameters each episode. Uses same unified reward system as
-    frozen scenario environment with team-based PBRS and trajectory logging.
+    Generates structured conflict scenarios (MERGE, CHASE, CROSS) with fixed 4-agent
+    configurations each episode. Scenarios resemble the existing scenario suite:
+    - MERGE: Aircraft converge to common waypoints (2x2 or 3+1 patterns)
+    - CHASE: In-trail conflicts with same heading (2x2 or 3+1 patterns)  
+    - CROSS: Perpendicular/angular crossings (2x2 or 3+1 patterns)
+    
+    All scenarios use consistent parameters (4 agents, 250 kt, 10000 ft) to enable
+    cross-scenario generalization and balanced training across conflict types.
+    Uses same unified reward system as frozen scenario environment with team-based
+    PBRS and comprehensive trajectory logging.
     
     Args:
-        env_config (dict): Configuration including max_aircraft, conflict_probability,
-                          scenario_complexity, conflict generation parameters.
+        env_config (dict): Configuration including max_aircraft (fixed at 4), 
+                          scenario_complexity (unused), conflict generation parameters.
     """
     
     metadata = {"name": "marl_collision_env_generic", "render_modes": []}
@@ -82,8 +89,11 @@ class MARLCollisionEnvGeneric(ParallelEnv):
         if env_config is None:
             env_config = {}
         
-        self.max_aircraft = int(env_config.get("max_aircraft", 4))
-        self.min_aircraft = int(env_config.get("min_aircraft", 2))
+        # Fixed 4-agent configuration (matching existing scenario suite)
+        self.max_aircraft = 4
+        self.min_aircraft = 4
+        
+        # Scenario generation parameters (legacy compatibility - not used for structured scenarios)
         self.conflict_probability = float(env_config.get("conflict_probability", 0.8))
         self.scenario_complexity = str(env_config.get("scenario_complexity", "medium"))
         self.airspace_size_nm = float(env_config.get("airspace_size_nm", 50.0))
@@ -121,8 +131,8 @@ class MARLCollisionEnvGeneric(ParallelEnv):
                 sys.stdout = old_stdout
                 sys.stderr = old_stderr
 
-        # Create possible agents list based on max aircraft
-        self.possible_agents = [f"AC{i:02d}" for i in range(self.max_aircraft)]
+        # Create possible agents list based on max aircraft (fixed naming: A1-A4)
+        self.possible_agents = ["A1", "A2", "A3", "A4"]
         self.agents = []
         
         # DEBUG: Log initialization
@@ -242,7 +252,15 @@ class MARLCollisionEnvGeneric(ParallelEnv):
         self._logger.setLevel(logging.INFO)
 
     def _generate_random_scenario(self, seed: Optional[int] = None) -> Dict[str, Any]:
-        """Generate random conflict scenario with configurable complexity.
+        """Generate structured conflict scenarios (merge, chase, cross) with fixed 4-agent configuration.
+        
+        Creates scenarios that resemble the existing scenario suite:
+        - MERGE: Aircraft converge to common waypoints (2x2 or 3+1 patterns)
+        - CHASE: In-trail conflicts with same heading (2x2 or 3+1 patterns)
+        - CROSS: Perpendicular/angular crossing conflicts (2x2 or 3+1 patterns)
+        
+        All scenarios use 4 agents with consistent speeds (250 kt) and altitude (10000 ft)
+        to ensure horizontal conflicts and enable cross-scenario generalization.
         
         Args:
             seed: Random seed for reproducibility.
@@ -253,79 +271,421 @@ class MARLCollisionEnvGeneric(ParallelEnv):
         if seed is not None:
             np.random.seed(seed)
         
-        # Determine number of aircraft
-        if self.scenario_complexity == "low":
-            num_aircraft = np.random.choice([2, 3], p=[0.7, 0.3])
-        elif self.scenario_complexity == "medium":
-            num_aircraft = np.random.choice([2, 3, 4], p=[0.4, 0.4, 0.2])
-        else:  # high
-            num_aircraft = np.random.choice([3, 4, 5, 6], p=[0.3, 0.4, 0.2, 0.1])
+        # Fixed 4 agents for all scenarios (matching trained models)
+        num_aircraft = 4
+        agent_ids = ["A1", "A2", "A3", "A4"]
         
-        num_aircraft = min(num_aircraft, self.max_aircraft)
-        num_aircraft = max(num_aircraft, self.min_aircraft)
+        # Central airspace reference point (consistent with existing scenarios)
+        center_lat = 51.0
+        center_lon = 13.7
+        base_alt_ft = 10000.0
+        base_spd_kt = 250.0
         
-        # Central airspace reference point (roughly over Netherlands)
-        center_lat = 52.0 + np.random.uniform(-2.0, 2.0)
-        center_lon = 4.0 + np.random.uniform(-2.0, 2.0)
+        # Randomly select scenario type (equal probability for balanced training)
+        scenario_types = ["merge", "chase", "cross"]
+        scenario_type = np.random.choice(scenario_types)
         
-        # Generate aircraft configurations
-        aircraft_configs = []
+        # Randomly select pattern (2x2 vs 3+1)
+        pattern = np.random.choice(["2x2", "3p1"])
         
-        for i in range(num_aircraft):
-            acid = f"AC{i:02d}"
-            actype = np.random.choice(self.aircraft_types)
-            
-            # Random position within airspace
-            angle = np.random.uniform(0, 2 * np.pi)
-            distance_nm = np.random.uniform(5.0, self.airspace_size_nm / 2)
-            
-            lat = center_lat + nm_to_lat_deg(distance_nm * np.cos(angle))
-            lon = center_lon + nm_to_lon_deg(distance_nm * np.sin(angle), center_lat)
-            
-            # Random altitude (realistic cruise levels)
-            # For generic scenarios, use same base altitude for all aircraft to ensure horizontal conflicts
-            # Add small variations within tolerance to simulate real-world altitude uncertainty
-            if i == 0:
-                # First aircraft sets the base altitude
-                base_alt_ft = np.random.choice([25000, 30000, 35000, 37000, 39000, 41000])
-                alt_ft = base_alt_ft
-            else:
-                # Other aircraft use base altitude with small variation (within tolerance)
-                alt_variation = np.random.uniform(-self.altitude_tolerance_ft, self.altitude_tolerance_ft)
-                alt_ft = base_alt_ft + alt_variation
-            
-            # Random initial heading
-            hdg_deg = np.random.uniform(0, 360)
-            
-            # Speed based on aircraft type
-            speed_range = self.speed_ranges.get(actype, (220, 280))
-            spd_kt = np.random.uniform(speed_range[0], speed_range[1])
-            
-            # Generate waypoint (destination)
-            wp_angle = np.random.uniform(0, 2 * np.pi)
-            wp_distance_nm = np.random.uniform(20.0, self.airspace_size_nm)
-            
-            wp_lat = lat + nm_to_lat_deg(wp_distance_nm * np.cos(wp_angle))
-            wp_lon = lon + nm_to_lon_deg(wp_distance_nm * np.sin(wp_angle), lat)
-            
-            aircraft_configs.append({
-                "id": acid,
-                "type": actype,
-                "lat": lat,
-                "lon": lon,
-                "alt_ft": alt_ft,
-                "hdg_deg": hdg_deg,
-                "spd_kt": spd_kt,
-                "waypoint": {"lat": wp_lat, "lon": wp_lon}
-            })
+        # Generate scenario based on type and pattern
+        if scenario_type == "merge":
+            aircraft_configs = self._generate_merge_scenario(
+                agent_ids, center_lat, center_lon, base_alt_ft, base_spd_kt, pattern
+            )
+        elif scenario_type == "chase":
+            aircraft_configs = self._generate_chase_scenario(
+                agent_ids, center_lat, center_lon, base_alt_ft, base_spd_kt, pattern
+            )
+        else:  # cross
+            aircraft_configs = self._generate_cross_scenario(
+                agent_ids, center_lat, center_lon, base_alt_ft, base_spd_kt, pattern
+            )
         
         return {
             "agents": aircraft_configs,
             "center_lat": center_lat,
             "center_lon": center_lon,
-            "scenario_type": "generic_random",
+            "scenario_type": f"{scenario_type}_{pattern}",
             "num_aircraft": num_aircraft
         }
+    
+    def _generate_merge_scenario(self, agent_ids: List[str], center_lat: float, 
+                                center_lon: float, alt_ft: float, spd_kt: float,
+                                pattern: str) -> List[Dict[str, Any]]:
+        """Generate MERGE scenario where aircraft converge to common waypoint(s).
+        
+        Args:
+            agent_ids: List of agent IDs (A1-A4)
+            center_lat: Center latitude
+            center_lon: Center longitude
+            alt_ft: Altitude in feet
+            spd_kt: Speed in knots
+            pattern: "2x2" (two separate merges) or "3p1" (3 to center, 1 to side)
+        """
+        configs = []
+        
+        if pattern == "2x2":
+            # Two separate 2→1 merges (like merge_2x2.json)
+            # Group 1: A1, A2 merge to left waypoint
+            # Group 2: A3, A4 merge to right waypoint
+            separation = 15.0  # NM between merge centers
+            radius = 50.0  # NM from center
+            
+            # Left merge center
+            left_wp_lon = center_lon - nm_to_lon_deg(separation, center_lat)
+            
+            # A1: Southwest approach to left waypoint
+            angle1 = radians(210)  # Southwest
+            configs.append({
+                "id": "A1",
+                "type": "A320",
+                "lat": center_lat + nm_to_lat_deg(radius * 0.8 * cos(angle1)),
+                "lon": left_wp_lon + nm_to_lon_deg(radius * 0.8 * sin(angle1), center_lat),
+                "hdg_deg": 352.5,  # Heading toward waypoint
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat, "lon": left_wp_lon}
+            })
+            
+            # A2: Southeast approach to left waypoint
+            angle2 = radians(150)  # Southeast
+            configs.append({
+                "id": "A2",
+                "type": "A320",
+                "lat": center_lat + nm_to_lat_deg(radius * 0.8 * cos(angle2)),
+                "lon": left_wp_lon + nm_to_lon_deg(radius * 0.8 * sin(angle2), center_lat),
+                "hdg_deg": 7.5,  # Heading toward waypoint
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat, "lon": left_wp_lon}
+            })
+            
+            # Right merge center
+            right_wp_lon = center_lon + nm_to_lon_deg(separation, center_lat)
+            
+            # A3: Northwest approach to right waypoint
+            angle3 = radians(330)  # Northwest
+            configs.append({
+                "id": "A3",
+                "type": "A320",
+                "lat": center_lat + nm_to_lat_deg(radius * 0.8 * cos(angle3)),
+                "lon": right_wp_lon + nm_to_lon_deg(radius * 0.8 * sin(angle3), center_lat),
+                "hdg_deg": 172.5,  # Heading toward waypoint
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat, "lon": right_wp_lon}
+            })
+            
+            # A4: Northeast approach to right waypoint
+            angle4 = radians(30)  # Northeast
+            configs.append({
+                "id": "A4",
+                "type": "A320",
+                "lat": center_lat + nm_to_lat_deg(radius * 0.8 * cos(angle4)),
+                "lon": right_wp_lon + nm_to_lon_deg(radius * 0.8 * sin(angle4), center_lat),
+                "hdg_deg": 187.5,  # Heading toward waypoint
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat, "lon": right_wp_lon}
+            })
+            
+        else:  # 3p1 pattern
+            # 3 aircraft merge to center, 1 goes to side (like merge_3p1.json)
+            radius = 50.0  # NM from center
+            
+            # A1: Southeast approach to center
+            angle1 = radians(195)  # South-southeast
+            configs.append({
+                "id": "A1",
+                "type": "A320",
+                "lat": center_lat + nm_to_lat_deg(radius * cos(angle1)),
+                "lon": center_lon + nm_to_lon_deg(radius * sin(angle1), center_lat),
+                "hdg_deg": 345.0,  # Heading toward center
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat, "lon": center_lon}
+            })
+            
+            # A2: South approach to center
+            configs.append({
+                "id": "A2",
+                "type": "A320",
+                "lat": center_lat - nm_to_lat_deg(radius),
+                "lon": center_lon,
+                "hdg_deg": 0.0,  # North
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat, "lon": center_lon}
+            })
+            
+            # A3: Southwest approach to center
+            angle3 = radians(165)  # South-southwest
+            configs.append({
+                "id": "A3",
+                "type": "A320",
+                "lat": center_lat + nm_to_lat_deg(radius * cos(angle3)),
+                "lon": center_lon + nm_to_lon_deg(radius * sin(angle3), center_lat),
+                "hdg_deg": 15.0,  # Heading toward center
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat, "lon": center_lon}
+            })
+            
+            # A4: Far east, non-conflicting
+            side_offset = 25.0  # NM to the side
+            configs.append({
+                "id": "A4",
+                "type": "A320",
+                "lat": center_lat - nm_to_lat_deg(radius * 0.5),
+                "lon": center_lon + nm_to_lon_deg(side_offset, center_lat),
+                "hdg_deg": 0.0,  # North
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {
+                    "lat": center_lat + nm_to_lat_deg(radius * 0.5),
+                    "lon": center_lon + nm_to_lon_deg(side_offset, center_lat)
+                }
+            })
+        
+        return configs
+    
+    def _generate_chase_scenario(self, agent_ids: List[str], center_lat: float,
+                                center_lon: float, alt_ft: float, spd_kt: float,
+                                pattern: str) -> List[Dict[str, Any]]:
+        """Generate CHASE scenario with in-trail conflicts (same heading, different positions).
+        
+        Args:
+            agent_ids: List of agent IDs (A1-A4)
+            center_lat: Center latitude
+            center_lon: Center longitude
+            alt_ft: Altitude in feet
+            spd_kt: Speed in knots
+            pattern: "2x2" (two parallel lanes) or "3p1" (3 in-trail, 1 on side)
+        """
+        configs = []
+        
+        if pattern == "2x2":
+            # Two separate in-trail pairs (like chase_2x2.json)
+            lane_separation = 8.0  # NM between lanes
+            trail_spacing = 6.0  # NM in-trail spacing
+            
+            # Left lane
+            left_lon = center_lon - nm_to_lon_deg(lane_separation / 2, center_lat)
+            
+            # A1: Lead aircraft, left lane
+            configs.append({
+                "id": "A1",
+                "type": "A320",
+                "lat": center_lat - nm_to_lat_deg(trail_spacing * 1.5),
+                "lon": left_lon,
+                "hdg_deg": 0.0,  # North
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat + nm_to_lat_deg(trail_spacing * 1.5), "lon": left_lon}
+            })
+            
+            # A2: Trail aircraft, left lane
+            configs.append({
+                "id": "A2",
+                "type": "A320",
+                "lat": center_lat - nm_to_lat_deg(trail_spacing * 0.5),
+                "lon": left_lon,
+                "hdg_deg": 0.0,  # North
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat + nm_to_lat_deg(trail_spacing * 1.5), "lon": left_lon}
+            })
+            
+            # Right lane
+            right_lon = center_lon + nm_to_lon_deg(lane_separation / 2, center_lat)
+            
+            # A3: Lead aircraft, right lane
+            configs.append({
+                "id": "A3",
+                "type": "A320",
+                "lat": center_lat - nm_to_lat_deg(trail_spacing * 1.5),
+                "lon": right_lon,
+                "hdg_deg": 0.0,  # North
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat + nm_to_lat_deg(trail_spacing * 1.5), "lon": right_lon}
+            })
+            
+            # A4: Trail aircraft, right lane
+            configs.append({
+                "id": "A4",
+                "type": "A320",
+                "lat": center_lat - nm_to_lat_deg(trail_spacing * 0.5),
+                "lon": right_lon,
+                "hdg_deg": 0.0,  # North
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat + nm_to_lat_deg(trail_spacing * 1.5), "lon": right_lon}
+            })
+            
+        else:  # 3p1 pattern
+            # 3 in-trail conflicting, 1 on side lane (like chase_3p1.json)
+            trail_spacing = 6.0  # NM in-trail spacing
+            side_offset = 15.0  # NM to the side
+            
+            # Center lane (3 aircraft in-trail)
+            for i, aid in enumerate(["A1", "A2", "A3"]):
+                configs.append({
+                    "id": aid,
+                    "type": "A320",
+                    "lat": center_lat - nm_to_lat_deg(trail_spacing * (2 - i)),
+                    "lon": center_lon,
+                    "hdg_deg": 0.0,  # North
+                    "spd_kt": spd_kt,
+                    "alt_ft": alt_ft,
+                    "waypoint": {"lat": center_lat + nm_to_lat_deg(trail_spacing * 1.5), "lon": center_lon}
+                })
+            
+            # Side lane (non-conflicting)
+            side_lon = center_lon + nm_to_lon_deg(side_offset, center_lat)
+            configs.append({
+                "id": "A4",
+                "type": "A320",
+                "lat": center_lat - nm_to_lat_deg(trail_spacing * 1.5),
+                "lon": side_lon,
+                "hdg_deg": 0.0,  # North
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat + nm_to_lat_deg(trail_spacing * 1.5), "lon": side_lon}
+            })
+        
+        return configs
+    
+    def _generate_cross_scenario(self, agent_ids: List[str], center_lat: float,
+                                center_lon: float, alt_ft: float, spd_kt: float,
+                                pattern: str) -> List[Dict[str, Any]]:
+        """Generate CROSS scenario with perpendicular/angular crossing conflicts.
+        
+        Args:
+            agent_ids: List of agent IDs (A1-A4)
+            center_lat: Center latitude
+            center_lon: Center longitude
+            alt_ft: Altitude in feet
+            spd_kt: Speed in knots
+            pattern: "2x2" (two separate crossings) or "3p1" (3-way intersection + 1 side)
+        """
+        configs = []
+        
+        if pattern == "2x2":
+            # Two separate 90° crossings (like cross_2x2.json)
+            cross_separation = 12.0  # NM between crossing centers
+            cross_radius = 15.0  # NM from crossing point
+            
+            # Left crossing
+            left_center_lon = center_lon - nm_to_lon_deg(cross_separation, center_lat)
+            
+            # A1: North-south through left crossing
+            configs.append({
+                "id": "A1",
+                "type": "A320",
+                "lat": center_lat - nm_to_lat_deg(cross_radius * 0.5),
+                "lon": left_center_lon,
+                "hdg_deg": 0.0,  # North
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat + nm_to_lat_deg(cross_radius * 0.5), "lon": left_center_lon}
+            })
+            
+            # A2: East-west through left crossing
+            configs.append({
+                "id": "A2",
+                "type": "A320",
+                "lat": center_lat,
+                "lon": left_center_lon - nm_to_lon_deg(cross_radius, center_lat),
+                "hdg_deg": 90.0,  # East
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat, "lon": left_center_lon + nm_to_lon_deg(cross_radius, center_lat)}
+            })
+            
+            # Right crossing
+            right_center_lon = center_lon + nm_to_lon_deg(cross_separation, center_lat)
+            
+            # A3: North-south through right crossing
+            configs.append({
+                "id": "A3",
+                "type": "A320",
+                "lat": center_lat - nm_to_lat_deg(cross_radius * 0.5),
+                "lon": right_center_lon,
+                "hdg_deg": 0.0,  # North
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat + nm_to_lat_deg(cross_radius * 0.5), "lon": right_center_lon}
+            })
+            
+            # A4: East-west through right crossing
+            configs.append({
+                "id": "A4",
+                "type": "A320",
+                "lat": center_lat,
+                "lon": right_center_lon - nm_to_lon_deg(cross_radius, center_lat),
+                "hdg_deg": 90.0,  # East
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat, "lon": right_center_lon + nm_to_lon_deg(cross_radius, center_lat)}
+            })
+            
+        else:  # 3p1 pattern
+            # 3-way intersection at center, 1 on side (like cross_3p1.json)
+            cross_radius = 15.0  # NM from center
+            side_offset = 18.0  # NM to the side
+            
+            # A1: North-south through center
+            configs.append({
+                "id": "A1",
+                "type": "A320",
+                "lat": center_lat - nm_to_lat_deg(cross_radius * 0.5),
+                "lon": center_lon,
+                "hdg_deg": 0.0,  # North
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat + nm_to_lat_deg(cross_radius * 0.5), "lon": center_lon}
+            })
+            
+            # A2: West-to-east through center
+            configs.append({
+                "id": "A2",
+                "type": "A320",
+                "lat": center_lat,
+                "lon": center_lon - nm_to_lon_deg(cross_radius, center_lat),
+                "hdg_deg": 90.0,  # East
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat, "lon": center_lon + nm_to_lon_deg(cross_radius, center_lat)}
+            })
+            
+            # A3: East-to-west through center (opposite of A2)
+            configs.append({
+                "id": "A3",
+                "type": "A320",
+                "lat": center_lat,
+                "lon": center_lon + nm_to_lon_deg(cross_radius, center_lat),
+                "hdg_deg": 270.0,  # West
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat, "lon": center_lon - nm_to_lon_deg(cross_radius, center_lat)}
+            })
+            
+            # A4: North-south on side lane (non-conflicting)
+            side_lon = center_lon + nm_to_lon_deg(side_offset, center_lat)
+            configs.append({
+                "id": "A4",
+                "type": "A320",
+                "lat": center_lat - nm_to_lat_deg(cross_radius * 0.5),
+                "lon": side_lon,
+                "hdg_deg": 0.0,  # North
+                "spd_kt": spd_kt,
+                "alt_ft": alt_ft,
+                "waypoint": {"lat": center_lat + nm_to_lat_deg(cross_radius), "lon": side_lon}
+            })
+        
+        return configs
         
     def _log_generated_scenario(self, scenario: Dict[str, Any], msg_prefix: str = ""):
         """Log scenario details for debugging."""
@@ -335,171 +695,6 @@ class MARLCollisionEnvGeneric(ParallelEnv):
         logger.info(f"  num_aircraft = {scenario.get('num_aircraft', 'N/A')}")
         logger.info(f"  scenario_type = {scenario.get('scenario_type', 'N/A')}")
         logger.info(f"  agent IDs = {[a['id'] for a in scenario['agents']]}")
-
-    def _create_conflict_scenario(self, base_scenario: Dict[str, Any]) -> Dict[str, Any]:
-        """Enhance base scenario with potential conflicts using BlueSky's conflict generation."""
-        agents = base_scenario["agents"].copy()
-        
-        # Randomly decide if we want to create specific conflicts
-        if np.random.random() < self.conflict_probability and len(agents) >= 2:
-            # Select pairs for conflict generation (create conflicts for multiple pairs)
-            num_conflicts = min(len(agents) // 2, 3)  # Up to 3 conflicts
-            
-            # Track which aircraft are already in conflicts to avoid overlapping
-            used_indices = set()
-            
-            for conflict_idx in range(num_conflicts):
-                available = [i for i in range(len(agents)) if i not in used_indices]
-                if len(available) < 2:
-                    break
-                
-                # Select two aircraft for conflict
-                target_idx = np.random.choice(available)
-                available.remove(target_idx)
-                intruder_idx = np.random.choice(available)
-                
-                target_agent = agents[target_idx]
-                intruder_agent = agents[intruder_idx]
-                
-                # Ensure both aircraft are at similar altitudes (horizontal conflict only)
-                alt_diff = abs(target_agent["alt_ft"] - intruder_agent["alt_ft"])
-                if alt_diff > self.altitude_tolerance_ft:
-                    # Adjust intruder altitude to be within tolerance
-                    intruder_agent["alt_ft"] = target_agent["alt_ft"] + np.random.uniform(
-                        -self.altitude_tolerance_ft/2, self.altitude_tolerance_ft/2
-                    )
-                
-                # Generate conflict parameters based on single-agent RL environments
-                # dpsi: 45-315 degrees for varied conflict geometries (avoid parallel/opposite)
-                dpsi = np.random.uniform(self.conflict_angle_range[0], self.conflict_angle_range[1])
-                
-                # dcpa: 0.5-5 NM for conflicts (0 = collision course, 5 = near miss)
-                dcpa = np.random.uniform(self.conflict_distance_range[0], self.conflict_distance_range[1])
-                
-                # tlosh: 100-1000 seconds (time to loss of separation)
-                tlosh = np.random.uniform(self.time_to_conflict_range[0], self.time_to_conflict_range[1])
-                
-                # Apply conflict generation logic using BlueSky's creconfs approach
-                modified_intruder = self._apply_conflict_geometry(
-                    target_agent, intruder_agent, dpsi, dcpa, tlosh
-                )
-                
-                # Update the intruder aircraft configuration
-                agents[intruder_idx] = modified_intruder
-                
-                # Mark these aircraft as used
-                used_indices.add(target_idx)
-                used_indices.add(intruder_idx)
-        
-        base_scenario["agents"] = agents
-        return base_scenario
-
-    def _apply_conflict_geometry(self, target_agent: Dict, intruder_agent: Dict, 
-                                dpsi: float, dcpa: float, tlosh: float) -> Dict:
-        """Apply conflict geometry to create a potential conflict between two aircraft.
-        
-        This method implements BlueSky's creconfs logic for horizontal conflict generation.
-        Ensures aircraft are at the same altitude (within tolerance) for valid horizontal conflicts.
-        
-        Args:
-            target_agent: Target aircraft configuration
-            intruder_agent: Intruder aircraft configuration to modify
-            dpsi: Conflict angle in degrees (relative track angle)
-            dcpa: Distance at closest point of approach in NM
-            tlosh: Time to loss of separation in seconds
-            
-        Returns:
-            Modified intruder agent configuration with conflict geometry
-        """
-        # Get target aircraft state
-        latref = target_agent["lat"]
-        lonref = target_agent["lon"]
-        altref = target_agent["alt_ft"]
-        trkref = radians(target_agent["hdg_deg"])
-        gsref_kt = target_agent["spd_kt"]
-        gsref = gsref_kt * 0.514444  # Convert knots to m/s
-        
-        # Conflict parameters
-        cpa = dcpa * 1852  # Convert NM to meters
-        pzr = 5.0 * 1852   # Protected zone radius (5 NM in meters)
-        
-        # Intruder track angle relative to target
-        trk = trkref + radians(dpsi)
-        
-        # Use intruder's original speed or vary it slightly for realism
-        intruder_gs_kt = intruder_agent["spd_kt"]
-        # Add slight speed variation for more realistic conflicts
-        speed_variation = np.random.uniform(-10, 10)  # ±10 knots variation
-        intruder_gs_kt = max(200, min(300, intruder_gs_kt + speed_variation))
-        intruder_gs = intruder_gs_kt * 0.514444  # m/s
-        
-        # Calculate ground speed components for both aircraft
-        gsn_target = gsref * cos(trkref)
-        gse_target = gsref * sin(trkref)
-        gsn_intruder = intruder_gs * cos(trk)
-        gse_intruder = intruder_gs * sin(trk)
-        
-        # Horizontal relative velocity vector
-        vreln = gsn_target - gsn_intruder
-        vrele = gse_target - gse_intruder
-        
-        # Relative velocity magnitude
-        vrel = sqrt(vreln * vreln + vrele * vrele)
-        
-        if vrel < 1e-6:  # Avoid division by zero (parallel courses)
-            # For parallel courses, place intruder to the side
-            dist_nm = np.random.uniform(10, 20)  # 10-20 NM away
-            brn = target_agent["hdg_deg"] + np.random.choice([-90, 90])  # 90 degrees left/right
-            
-            aclat = latref + nm_to_lat_deg(dist_nm * cos(radians(brn)))
-            aclon = lonref + nm_to_lon_deg(dist_nm * sin(radians(brn)), latref)
-            achdg = target_agent["hdg_deg"]  # Same heading (parallel)
-        else:
-            # Relative travel distance to closest point of approach
-            # Add extra distance if CPA is within protected zone
-            drelcpa = tlosh * vrel
-            if cpa < pzr:
-                drelcpa += sqrt(max(0, pzr * pzr - cpa * cpa))
-            
-            # Initial intruder distance from target
-            dist = sqrt(drelcpa * drelcpa + cpa * cpa)
-            
-            # Rotation matrix elements for distance vector
-            if dist > 1e-6:
-                rd = drelcpa / dist  # Radial component
-                rx = cpa / dist      # Cross-track component
-            else:
-                rd, rx = 1.0, 0.0
-            
-            # Rotate relative velocity vector to obtain intruder bearing from target
-            brn = degrees(atan2(-rx * vreln + rd * vrele, rd * vreln + rx * vrele))
-            
-            # Calculate intruder lat/lon using bearing and distance
-            dist_nm = dist / 1852  # Convert meters to nautical miles
-            
-            aclat = latref + nm_to_lat_deg(dist_nm * cos(radians(brn)))
-            aclon = lonref + nm_to_lon_deg(dist_nm * sin(radians(brn)), latref)
-            
-            # Calculate intruder heading from ground speed components
-            achdg = degrees(atan2(gse_intruder, gsn_intruder))
-            achdg = achdg % 360
-        
-        # CRITICAL: Ensure same altitude for horizontal conflicts (within tolerance)
-        # This prevents false conflicts due to vertical separation
-        alt_variation = np.random.uniform(-self.altitude_tolerance_ft/2, self.altitude_tolerance_ft/2)
-        acalt = altref + alt_variation
-        
-        # Update intruder agent configuration
-        modified_intruder = intruder_agent.copy()
-        modified_intruder.update({
-            "lat": aclat,
-            "lon": aclon,
-            "alt_ft": acalt,
-            "hdg_deg": achdg,
-            "spd_kt": intruder_gs_kt
-        })
-        
-        return modified_intruder
 
     # The rest of the methods are copied from MARLCollisionEnv with minimal changes
     # (observation_space, action_space, observe, last, reset, step, etc.)
@@ -565,9 +760,8 @@ class MARLCollisionEnvGeneric(ParallelEnv):
         bs.stack.stack("TIME 0")
         bs.stack.stack("DT 1.0")
 
-        # Generate random scenario
+        # Generate structured scenario (merge/chase/cross with fixed 4 agents)
         scenario = self._generate_random_scenario(seed)
-        scenario = self._create_conflict_scenario(scenario)
         
         # DEBUG: Log what scenario was generated
         self._log_generated_scenario(scenario, f"Episode {self._episode_id}")
