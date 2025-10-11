@@ -121,7 +121,7 @@ All scenario visualizations are available in `docs/scenario_plots/`.
 </table>
 
 **Key Features:**
-- Centered at 52.0°N, 4.0°E (Netherlands airspace)
+- Centered at 51.0°N, 13.7°E (Dresden, Germany airspace)
 - FL100 altitude, 250kt cruise speed
 - "FIXED" distances ensure episode convergence within 100 steps (1000 seconds)
 - Three conflict geometries (chase, cross, merge) with three complexity levels (2x2, 3+1, 4-all)
@@ -133,36 +133,48 @@ The following visualizations show trained PPO models executing their baseline sc
 #### Chase Scenarios
 <table>
 <tr>
-<td align="center"><b>Chase 2x2 Baseline</b><br><img src="docs/scenario_plots/Trained Viz/chase_2x2_baseline.gif" width="250"/><br><i>Model: PPO_chase_2x2_20251008_015945</i></td>
-<td align="center"><b>Chase 3+1 Baseline</b><br><img src="docs/scenario_plots/Trained Viz/chase_3p1_baseline.gif" width="250"/><br><i>Model: PPO_chase_3p1_20251008_015936</i></td>
-<td align="center"><b>Chase 4-All Baseline</b><br><img src="docs/scenario_plots/Trained Viz/chase_4all_baseline.gif" width="250"/><br><i>Model: PPO_chase_4all_20251008_015933</i></td>
+<td align="center"><b>Chase 2x2 Baseline</b><br><img src="docs/Visualisation_GIF/Trained_Viz_Baseline/chase_2x2_baseline.gif" width="250"/><br><i>Model: PPO_chase_2x2_20251008_015945</i></td>
+<td align="center"><b>Chase 3+1 Baseline</b><br><img src="docs/Visualisation_GIF/Trained_Viz_Baseline/chase_3p1_baseline.gif" width="250"/><br><i>Model: PPO_chase_3p1_20251008_015936</i></td>
+<td align="center"><b>Chase 4-All Baseline</b><br><img src="docs/Visualisation_GIF/Trained_Viz_Baseline/chase_4all_baseline.gif" width="250"/><br><i>Model: PPO_chase_4all_20251008_015933</i></td>
 </tr>
 </table>
 
 #### Cross Scenarios
 <table>
 <tr>
-<td align="center"><b>Cross 2x2 Baseline</b><br><img src="docs/scenario_plots/Trained Viz/cross_2x2_baseline.gif" width="250"/><br><i>Model: PPO_cross_2x2_20251008_050349</i></td>
-<td align="center"><b>Cross 3+1 Baseline</b><br><img src="docs/scenario_plots/Trained Viz/cross_3p1_baseline.gif" width="250"/><br><i>Model: PPO_cross_3p1_20251008_055141</i></td>
-<td align="center"><b>Cross 4-All Baseline</b><br><img src="docs/scenario_plots/Trained Viz/cross_4all_baseline.gif" width="250"/><br><i>Model: PPO_cross_4all_20251008_053820</i></td>
+<td align="center"><b>Cross 2x2 Baseline</b><br><img src="docs/Visualisation_GIF/Trained_Viz_Baseline/cross_2x2_baseline.gif" width="250"/><br><i>Model: PPO_cross_2x2_20251008_050349</i></td>
+<td align="center"><b>Cross 3+1 Baseline</b><br><img src="docs/Visualisation_GIF/Trained_Viz_Baseline/cross_3p1_baseline.gif" width="250"/><br><i>Model: PPO_cross_3p1_20251008_055141</i></td>
+<td align="center"><b>Cross 4-All Baseline</b><br><img src="docs/Visualisation_GIF/Trained_Viz_Baseline/cross_4all_baseline.gif" width="250"/><br><i>Model: PPO_cross_4all_20251008_053820</i></td>
 </tr>
 </table>
 
 #### Merge Scenarios
 <table>
 <tr>
-<td align="center"><b>Merge 2x2 Baseline</b><br><img src="docs/scenario_plots/Trained Viz/merge_2x2_baseline.gif" width="250"/><br><i>Model: PPO_merge_2x2_20251008_170616</i></td>
-<td align="center"><b>Merge 3+1 Baseline</b><br><img src="docs/scenario_plots/Trained Viz/merge_3p1_baseline.gif" width="250"/><br><i>Model: PPO_merge_3p1_20251008_192721</i></td>
-<td align="center"><b>Merge 4-All Baseline</b><br><img src="docs/scenario_plots/Trained Viz/merge_4all_baseline.gif" width="250"/><br><i>Model: PPO_merge_4all_20251009_024636</i></td>
+<td align="center"><b>Merge 2x2 Baseline</b><br><img src="docs/Visualisation_GIF/Trained_Viz_Baseline/merge_2x2_baseline.gif" width="250"/><br><i>Model: PPO_merge_2x2_20251008_170616</i></td>
+<td align="center"><b>Merge 3+1 Baseline</b><br><img src="docs/Visualisation_GIF/Trained_Viz_Baseline/merge_3p1_baseline.gif" width="250"/><br><i>Model: PPO_merge_3p1_20251008_192721</i></td>
+<td align="center"><b>Merge 4-All Baseline</b><br><img src="docs/Visualisation_GIF/Trained_Viz_Baseline/merge_4all_baseline.gif" width="250"/><br><i>Model: PPO_merge_4all_20251009_024636</i></td>
 </tr>
 </table>
 
-#### Generic Model Performance
+### Inter-Scenario Transfer Failures
+
+When models encounter unfamiliar conflict geometries, catastrophic failures occur. These examples show the **Cross 3+1** model (trained on crossing conflicts) attempting various chase scenarios:
+
 <table>
 <tr>
-<td align="center"><b>Generic Model (Cross 2x2 Test)</b><br><img src="docs/scenario_plots/Trained Viz/generic_baseline.gif" width="250"/><br><i>Model: PPO_generic_20251008_225941</i><br>Trained on dynamic conflicts, tested on representative scenario</td>
+<td align="center"><b>Cross 3+1 → Chase 4-All</b><br><img src="docs/Visualisation_GIF/Inter_shift_Visualisation/cross_3p1__on__chase_4all.gif" width="250"/><br><i>Complete breakdown: crossing strategy fails in chase geometry</i></td>
+<td align="center"><b>Cross 3+1 → Cross 2x2</b><br><img src="docs/Visualisation_GIF/Inter_shift_Visualisation/cross_3p1__on__cross_2x2.gif" width="250"/><br><i>Complexity mismatch: 3+1 model struggles with simpler 2x2</i></td>
+<td align="center"><b>Cross 3+1 → Cross 4-All</b><br><img src="docs/Visualisation_GIF/Inter_shift_Visualisation/cross_3p1__on__cross_4all.gif" width="250"/><br><i>Scale-up challenge: 3+1 coordination breaks in 4-all complexity</i></td>
 </tr>
 </table>
+
+**Key Observations:**
+- 🔴 **Geometry mismatch** (Cross→Chase): Model applies perpendicular avoidance maneuvers to in-trail conflicts, causing collisions
+- 🟠 **Complexity transfer** (3+1→2x2): Overtrained policies exhibit excessive caution in simpler scenarios
+- 🟡 **Scale-up failure** (3+1→4-all): Coordination strategies collapse with additional agents
+
+*More inter-shift examples: [docs/Visualisation_GIF/Inter_shift_Visualisation/](docs/Visualisation_GIF/Inter_shift_Visualisation/)*
 
 **Generating Baseline Visualizations:**
 ```bash
@@ -180,9 +192,9 @@ python run_baseline_visualizations.py --episodes 5 --fps 10
 ```
 
 **Output locations:**
-- GIF visualizations: `docs/scenario_plots/Trained Viz/`
+- GIF visualizations: `docs/Visualisation_GIF/Trained_Viz_Baseline/`
 - Trajectory CSVs: `vis_results/`
-- Execution summary: `docs/scenario_plots/Trained Viz/baseline_visualization_results.json`
+- Execution summary: `docs/Visualisation_GIF/Trained_Viz_Baseline/baseline_visualization_results.json`
 
 ---
 
