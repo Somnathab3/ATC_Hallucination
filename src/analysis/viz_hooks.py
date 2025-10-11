@@ -1,11 +1,43 @@
 """
 Module Name: viz_hooks.py
-Description: Visualization integration hooks for shift testing pipeline.
+Description: 
+    Visualization integration hooks for shift testing pipeline.
+    Provides seamless integration between robustness testing and visualization components.
+    
+    Architecture:
+        Acts as glue layer between:
+            - Testing modules (intrashift_tester, intershift_matrix)
+            - Environment outputs (trajectory CSV/JSON)
+            - Visualization modules (trajectory_comparison_plot, trajectory_comparison_map)
+            - Analysis modules (hallucination_detector_enhanced)
+    
+    Automatic Artifact Generation:
+        Episode-level:
+            - Trajectory comparison plots (baseline vs shifted)
+            - Geographic maps with conflict zones (Folium/Plotly)
+            - Separation time series with LoS markers
+            - Hallucination confusion matrices
+        
+        Run-level:
+            - Summary dashboards aggregating all episodes
+            - Shift analysis heatmaps (performance degradation)
+            - Statistical comparison tables
+            - Bundle analysis (multi-shift aggregation)
+    
+    Data Flow:
+        1. Testing module runs episodes → generates trajectory CSV/JSON
+        2. viz_hooks extracts trajectory + hallucination series
+        3. Merges data into unified DataFrame
+        4. Calls visualization modules with standardized format
+        5. Saves artifacts to results directory
+    
+    Key Functions:
+        - make_episode_visuals: Per-episode plots and maps
+        - make_run_visuals: Aggregate analysis dashboards
+        - _series_to_frame: Data format conversion and merging
+
 Author: Som
 Date: 2025-10-04
-
-Provides seamless integration between shift testing and visualization components,
-enabling automatic generation of analysis artifacts during robustness evaluation.
 """
 
 import os
@@ -16,14 +48,52 @@ import matplotlib.pyplot as plt
 
 def _series_to_frame(traj_csv: str, series: dict) -> pd.DataFrame:
     """
-    Convert trajectory CSV and detector series into a merged DataFrame.
+    Convert trajectory CSV and detector series into merged DataFrame for visualization.
+    
+    Trajectory CSV Format (from MARLCollisionEnv):
+        Core columns:
+            - episode_id, step_idx, sim_time_s, agent_id
+        
+        State columns:
+            - lat_deg, lon_deg, alt_ft, hdg_deg, tas_kt, cas_kt
+        
+        Action columns:
+            - action_hdg_delta_deg, action_spd_delta_kt
+        
+        Reward columns:
+            - reward_progress, reward_drift, reward_violate_entry, reward_violate_step,
+              reward_act_cost, reward_time, reward_reach, reward_terminal, reward_team,
+              reward_total
+        
+        Separation columns:
+            - min_separation_nm, dist_to_{agent}_nm (for each agent)
+        
+        Conflict columns:
+            - conflict_flag, collision_flag, conflict_pairs_count
+        
+        Waypoint columns:
+            - wp_dist_nm, waypoint_reached, waypoint_hits
+        
+        Hallucination columns (if enabled):
+            - gt_conflict, predicted_alert, tp, fp, fn, tn
+    
+    Series Data (from HallucinationDetector):
+        Optional additional hallucination metrics if not already in CSV.
+        Contains time-series arrays: gt_conflict, alert, tp, fp, fn, tn.
+    
+    Merging Strategy:
+        1. Load trajectory CSV with full environment state
+        2. Validate required visualization columns present
+        3. Add missing columns with sensible defaults if needed
+        4. Merge series data if not already in CSV
     
     Args:
-        traj_csv: Path to trajectory CSV file (rich format from environment)
-        series: Series data from hallucination detector
-        
+        traj_csv: Path to trajectory CSV file (rich format from environment).
+        series: Series data dict from hallucination detector (optional).
+    
     Returns:
-        pd.DataFrame: Merged trajectory and series data with proper column mapping
+        Merged pd.DataFrame with standardized column names for visualization.
+        Empty DataFrame if CSV missing or invalid.
     """
     if not os.path.exists(traj_csv):
         print(f"Warning: Trajectory CSV not found: {traj_csv}")

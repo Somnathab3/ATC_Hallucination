@@ -1,8 +1,53 @@
 """
 Module Name: train_frozen_scenario.py
-Description: MARL training framework for air traffic collision avoidance using frozen scenarios.
-             Supports PPO, SAC, IMPALA, CQL, APPO with shared policy architecture, GPU acceleration,
-             unified reward system, and adaptive early stopping based on conflict-free performance.
+Description: 
+    MARL training framework for air traffic collision avoidance using frozen scenarios.
+    Trains multi-agent collision avoidance policies on fixed 4-agent conflict scenarios.
+    
+    Training Architecture:
+        Algorithm Support:
+            - PPO (Proximal Policy Optimization): Primary algorithm
+            - SAC (Soft Actor-Critic): Commented out
+            - IMPALA, CQL, APPO: Commented out
+        
+        Policy Architecture:
+            - Shared policy across all agents (parameter sharing)
+            - Continuous action space: [heading_delta, speed_delta]
+            - Dict observation space: Self state + K nearest neighbors
+        
+        Reward System:
+            Unified 9-component reward:
+                1. progress: Waypoint approach (α=0.01 per NM)
+                2. drift: Heading alignment (β=0.005 per deg)
+                3. violation_entry: LoS entry penalty (γ=-10.0)
+                4. violation_step: LoS persistence penalty (δ=-1.0 per step)
+                5. action_cost: Control effort (ε=0.001 per unit²)
+                6. time: Time penalty (ζ=-0.01 per step)
+                7. reach: Waypoint bonus (ρ=50.0)
+                8. terminal: Collision penalty (τ=-100.0)
+                9. team: PBRS coordination (λ=0.2)
+        
+        Training Features:
+            - GPU acceleration (optional)
+            - Adaptive early stopping based on conflict-free rate
+            - Periodic checkpointing (every 50 iterations)
+            - Comprehensive metrics logging (CSV + console)
+            - Multi-worker parallel rollouts
+    
+    Early Stopping Criteria:
+        Monitors last N iterations (default 50):
+            - High success rate: ≥90% waypoint reach
+            - Low conflict rate: ≤10% LoS violations
+            - Stable performance: <5% variance
+        Stops training if all criteria met for N consecutive iterations.
+    
+    Usage:
+        python -m src.training.train_frozen_scenario \
+            --scenario scenarios/chase_2x2.json \
+            --iterations 2000 \
+            --use-gpu \
+            --team-shaping
+
 Author: Som
 Date: 2025-10-04
 """
@@ -43,10 +88,18 @@ LOGGER.setLevel(logging.INFO)
 
 def check_gpu_availability():
     """
-    Detect and report GPU resources.
+    Detect and report GPU resources for training.
+    
+    Checks for CUDA-enabled GPUs using PyTorch.
+    Prints detailed device information to console.
+    
+    GPU Benefits:
+        - 5-10× faster neural network training
+        - Enables larger batch sizes
+        - Parallel environment rollouts with GPU-accelerated inference
     
     Returns:
-        bool: True if CUDA GPUs available.
+        True if CUDA GPUs available, False otherwise.
     """
     if torch.cuda.is_available():
         gpu_count = torch.cuda.device_count()
@@ -61,8 +114,23 @@ def init_ray(use_gpu: bool = False):
     """
     Initialize Ray framework with optimized configuration.
     
+    Ray Configuration:
+        GPU mode:
+            - Distributed training across workers
+            - GPU resources allocated to policy training
+            - CPU resources for environment rollouts
+        
+        CPU mode (local_mode=True):
+            - Single-process execution for debugging
+            - No inter-process communication overhead
+            - Easier stack traces and profiling
+    
+    Logging:
+        Disabled to avoid log clutter (log_to_driver=False).
+        Use LOGGER for application-level logging.
+    
     Args:
-        use_gpu: Enable GPU support.
+        use_gpu: Enable GPU support if available.
     """
     if not ray.is_initialized():
         init_kwargs = {

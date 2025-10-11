@@ -1,8 +1,51 @@
 """
 Module Name: scenario_generator.py
-Description: Generates 9 standardized aircraft conflict scenarios for MARL training and evaluation.
-             Creates 3 conflict families (CHASE, MERGE, CROSS) × 3 patterns (2x2, 3+1, 4all).
-             All scenarios: 4 agents, 250kt, 10,000ft, conflict-free start (>5 NM separation).
+Description: 
+    Generates 9 standardized aircraft conflict scenarios for MARL training and evaluation.
+    Creates balanced scenario suite covering 3 conflict families × 3 patterns each.
+    
+    Scenario Structure:
+        3 Conflict Families:
+            - CHASE: In-trail conflicts (overtaking, same heading)
+            - MERGE: Converging conflicts (head-on, angled approaches)
+            - CROSS: Crossing conflicts (perpendicular, angular intersections)
+        
+        3 Patterns per family:
+            - 2x2: Two agent pairs (e.g., A1+A2 vs A3+A4)
+            - 3+1 (3p1): Three-agent cluster + one singleton
+            - 4all: All four agents in symmetric conflict
+    
+    All 9 scenarios share:
+        - 4 agents per scenario
+        - 250 kt TAS baseline speed
+        - 10,000 ft cruise altitude
+        - Conflict-free start: All pairs ≥5.1 NM separation
+        - Center: 51.0°N, 13.7°E (Dresden airspace)
+    
+    Geometry Constraints:
+        - Start positions: 30-60 NM from center/waypoints
+        - Conflict zones: Within 5 NM of merge/crossing points
+        - Waypoint placement: Ensures guaranteed conflicts without intervention
+        - Minimum start separation enforced by radial nudging algorithm
+    
+    JSON Output Format:
+        {
+            "scenario_name": "chase_2x2",
+            "description": "...",
+            "agents": [
+                {
+                    "id": "A1", "type": "A320",
+                    "lat": 51.5, "lon": 13.7, "hdg_deg": 0.0,
+                    "spd_kt": 250.0, "alt_ft": 10000.0,
+                    "waypoint": {"lat": 52.0, "lon": 13.7}
+                },
+                ...
+            ]
+        }
+    
+    Usage:
+        python scenario_generator.py  # Generates all 9 scenarios in scenarios/ dir
+
 Author: Som
 Date: 2025-10-07
 """
@@ -19,38 +62,104 @@ ALT_FT = 10000.0
 SPD_KT = 250.0
 
 def nm_to_lat(nm: float) -> float:
-    """Convert nautical miles to latitude degrees (1° ≈ 60 NM)."""
+    """
+    Convert nautical miles to latitude degrees.
+    
+    At Earth's surface: 1° latitude ≈ 60 NM (standard approximation).
+    Exact: 1 NM = 1 minute of arc = 1/60 degree.
+    
+    Args:
+        nm: Distance in nautical miles.
+    
+    Returns:
+        Latitude difference in degrees.
+    """
     return nm / 60.0
 
 def nm_to_lon(nm: float, at_lat_deg: float) -> float:
-    """Convert nautical miles to longitude degrees at given latitude."""
+    """
+    Convert nautical miles to longitude degrees at given latitude.
+    
+    Longitude degree width shrinks with cos(latitude) due to Earth's curvature.
+    At equator: 1° longitude ≈ 60 NM.
+    At 60° latitude: 1° longitude ≈ 30 NM.
+    
+    Args:
+        nm: Distance in nautical miles.
+        at_lat_deg: Latitude where conversion is performed (deg).
+    
+    Returns:
+        Longitude difference in degrees.
+    """
     return nm / (60.0 * max(1e-6, math.cos(math.radians(at_lat_deg))))
 
 def pos_offset(lat0: float, lon0: float, north_nm: float, east_nm: float):
-    """Calculate position from base coordinates and north/east offsets (NM)."""
+    """
+    Calculate position from base coordinates and north/east offsets.
+    
+    Uses local ENU (East-North-Up) frame approximation.
+    Valid for small offsets (<100 NM) from reference point.
+    
+    Args:
+        lat0: Reference latitude (deg).
+        lon0: Reference longitude (deg).
+        north_nm: Northward offset (NM, positive = north).
+        east_nm: Eastward offset (NM, positive = east).
+    
+    Returns:
+        (lat, lon) tuple of new position.
+    """
     return (lat0 + nm_to_lat(north_nm), lon0 + nm_to_lon(east_nm, lat0))
 
 def _pairwise_sep_nm(a, b):
-    """Calculate fast local NM distance between two agents (valid for small offsets)."""
+    """
+    Calculate fast local NM distance between two agents.
+    
+    Uses planar approximation (valid for small offsets <100 NM):
+        - Convert lat/lon differences to NM
+        - Apply Pythagorean distance in local ENU frame
+    
+    Args:
+        a: Agent dict with 'lat', 'lon' keys.
+        b: Agent dict with 'lat', 'lon' keys.
+    
+    Returns:
+        Horizontal separation distance (NM).
+    """
     lat1, lon1, lat2, lon2 = a["lat"], a["lon"], b["lat"], b["lon"]
-    dN = (lat1 - lat2) * 60.0
-    latm = 0.5 * (lat1 + lat2)
-    dE = (lon1 - lon2) * 60.0 * math.cos(math.radians(latm))
+    dN = (lat1 - lat2) * 60.0  # Latitude difference in NM
+    latm = 0.5 * (lat1 + lat2)  # Mean latitude for longitude correction
+    dE = (lon1 - lon2) * 60.0 * math.cos(math.radians(latm))  # Longitude difference in NM
     return (dN**2 + dE**2) ** 0.5
 
 def enforce_min_start_sep(agents, min_nm=5.1, max_iter=10, scale=1.06):
     """
-    Ensure all aircraft start ≥ min_nm apart by nudging the closest pair
-    radially away from CENTER (keeps headings/waypoints unchanged).
+    Ensure all aircraft start ≥ min_nm apart by nudging violating pairs radially outward.
+    
+    Algorithm:
+        1. Find closest agent pair with separation < min_nm
+        2. Push both agents radially away from CENTER_LAT, CENTER_LON
+        3. Scale radial distance by factor (default 1.06)
+        4. Repeat until all pairs separated or max_iter reached
+    
+    Preserves:
+        - Headings: Agent headings unchanged
+        - Waypoints: Waypoint locations unchanged
+        - Relative geometry: Only radial scaling applied
+    
+    Used to avoid start conflicts while maintaining intended conflict geometry.
+    Without this, agents might start inside 5 NM well-clear zone.
     
     Args:
-        agents: List of agent configurations.
-        min_nm: Minimum separation in nautical miles (default 5.1 NM to avoid conflicts).
-        max_iter: Maximum iterations to attempt separation.
-        scale: Scaling factor for pushing agents apart.
-        
+        agents: List of agent configuration dicts (with 'lat', 'lon' keys).
+        min_nm: Minimum separation requirement (NM). Default 5.1 NM to ensure
+                conflict-free start (>5 NM well-clear threshold).
+        max_iter: Maximum iterations to attempt separation (default 10).
+        scale: Radial scaling factor for pushing agents apart (default 1.06).
+    
     Returns:
         Modified agents list with enforced minimum separation.
+        If convergence fails, returns best-effort result after max_iter.
     """
     for _ in range(max_iter):
         # Find current minimum separation

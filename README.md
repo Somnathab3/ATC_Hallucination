@@ -96,20 +96,27 @@ python atc_cli.py full-pipeline --scenario head_on --train-timesteps 50000 --tes
 
 ## 📐 Scenario Visualizations
 
-Our five standardized scenarios create inevitable conflicts without intervention:
+Our standardized scenarios create inevitable conflicts without intervention, testing both scenario-specific and generic trained models.
 
 ### Initial Scenario Geometries
 
+All scenario visualizations are available in `docs/scenario_plots/`.
+
 <table>
 <tr>
-<td align="center"><b>Head-On</b><br><img src="docs/scenario_plots/head_on_radar.png" width="200"/><br>2 aircraft, reciprocal headings<br>18 NM approach distance</td>
-<td align="center"><b>T-Formation</b><br><img src="docs/scenario_plots/t_formation_radar.png" width="200"/><br>3 aircraft, perpendicular crossing<br>7.5 NM arm, 10 NM stem</td>
-<td align="center"><b>Parallel</b><br><img src="docs/scenario_plots/parallel_radar.png" width="200"/><br>3 aircraft, same direction<br>8 NM in-trail spacing</td>
+<td align="center"><b>Chase 2x2</b><br><a href="docs/scenario_plots/chase_2x2_radar.html"><img src="docs/scenario_plots/chase_2x2_radar.png" width="200"/></a><br>2 chase pairs<br><a href="docs/scenario_plots/chase_2x2_radar.html">Interactive Plot</a></td>
+<td align="center"><b>Chase 3+1</b><br><a href="docs/scenario_plots/chase_3p1_radar.html"><img src="docs/scenario_plots/chase_3p1_radar.png" width="200"/></a><br>3 chase + 1 crossing<br><a href="docs/scenario_plots/chase_3p1_radar.html">Interactive Plot</a></td>
+<td align="center"><b>Chase 4-All</b><br><a href="docs/scenario_plots/chase_4all_radar.html"><img src="docs/scenario_plots/chase_4all_radar.png" width="200"/></a><br>4-way chase<br><a href="docs/scenario_plots/chase_4all_radar.html">Interactive Plot</a></td>
 </tr>
 <tr>
-<td align="center"><b>Converging</b><br><img src="docs/scenario_plots/converging_radar.png" width="200"/><br>4 aircraft, clustered waypoints<br>12 NM radius placement</td>
-<td align="center"><b>Canonical Crossing</b><br><img src="docs/scenario_plots/canonical_crossing_radar.png" width="200"/><br>4 aircraft, orthogonal<br>12.5 NM radius, 4-way intersection</td>
-<td></td>
+<td align="center"><b>Cross 2x2</b><br><a href="docs/scenario_plots/cross_2x2_radar.html"><img src="docs/scenario_plots/cross_2x2_radar.png" width="200"/></a><br>2 crossing pairs<br><a href="docs/scenario_plots/cross_2x2_radar.html">Interactive Plot</a></td>
+<td align="center"><b>Cross 3+1</b><br><a href="docs/scenario_plots/cross_3p1_radar.html"><img src="docs/scenario_plots/cross_3p1_radar.png" width="200"/></a><br>3 crossing + 1 parallel<br><a href="docs/scenario_plots/cross_3p1_radar.html">Interactive Plot</a></td>
+<td align="center"><b>Cross 4-All</b><br><a href="docs/scenario_plots/cross_4all_radar.html"><img src="docs/scenario_plots/cross_4all_radar.png" width="200"/></a><br>4-way crossing<br><a href="docs/scenario_plots/cross_4all_radar.html">Interactive Plot</a></td>
+</tr>
+<tr>
+<td align="center"><b>Merge 2x2</b><br><a href="docs/scenario_plots/merge_2x2_radar.html"><img src="docs/scenario_plots/merge_2x2_radar.png" width="200"/></a><br>2 merging pairs<br><a href="docs/scenario_plots/merge_2x2_radar.html">Interactive Plot</a></td>
+<td align="center"><b>Merge 3+1</b><br><a href="docs/scenario_plots/merge_3p1_radar.html"><img src="docs/scenario_plots/merge_3p1_radar.png" width="200"/></a><br>3 merging + 1 crossing<br><a href="docs/scenario_plots/merge_3p1_radar.html">Interactive Plot</a></td>
+<td align="center"><b>Merge 4-All</b><br><a href="docs/scenario_plots/merge_4all_radar.html"><img src="docs/scenario_plots/merge_4all_radar.png" width="200"/></a><br>4-way merge<br><a href="docs/scenario_plots/merge_4all_radar.html">Interactive Plot</a></td>
 </tr>
 </table>
 
@@ -117,67 +124,193 @@ Our five standardized scenarios create inevitable conflicts without intervention
 - Centered at 52.0°N, 4.0°E (Netherlands airspace)
 - FL100 altitude, 250kt cruise speed
 - "FIXED" distances ensure episode convergence within 100 steps (1000 seconds)
+- Three conflict geometries (chase, cross, merge) with three complexity levels (2x2, 3+1, 4-all)
 
-### Trained Policy Behavior
+### Trained Policy Baseline Performance
 
-Example collision avoidance trajectories after training:
+The following visualizations show trained PPO models executing their baseline scenarios (trained and tested on same scenario):
 
+#### Chase Scenarios
 <table>
 <tr>
-<td><img src="docs/scenario_plots/Trained Viz/Best_headon.gif" width="250"/><br><i>Head-On: Successful conflict resolution</i></td>
-<td><img src="docs/scenario_plots/Trained Viz/best Parallel.gif" width="250"/><br><i>Parallel: In-trail coordination</i></td>
-<td><img src="docs/scenario_plots/Trained Viz/Best_run_T_formation_+35.gif" width="250"/><br><i>T-Formation: Multi-agent crossing</i></td>
-</tr>
-<tr>
-<td><img src="docs/scenario_plots/Trained Viz/Converging.gif" width="250"/><br><i>Converging: Clustered waypoint navigation</i></td>
-<td><img src="docs/scenario_plots/Trained Viz/cannonical.gif" width="250"/><br><i>Canonical Crossing: 4-way intersection</i></td>
-<td></td>
+<td align="center"><b>Chase 2x2 Baseline</b><br><img src="docs/scenario_plots/Trained Viz/chase_2x2_baseline.gif" width="250"/><br><i>Model: PPO_chase_2x2_20251008_015945</i></td>
+<td align="center"><b>Chase 3+1 Baseline</b><br><img src="docs/scenario_plots/Trained Viz/chase_3p1_baseline.gif" width="250"/><br><i>Model: PPO_chase_3p1_20251008_015936</i></td>
+<td align="center"><b>Chase 4-All Baseline</b><br><img src="docs/scenario_plots/Trained Viz/chase_4all_baseline.gif" width="250"/><br><i>Model: PPO_chase_4all_20251008_015933</i></td>
 </tr>
 </table>
+
+#### Cross Scenarios
+<table>
+<tr>
+<td align="center"><b>Cross 2x2 Baseline</b><br><img src="docs/scenario_plots/Trained Viz/cross_2x2_baseline.gif" width="250"/><br><i>Model: PPO_cross_2x2_20251008_050349</i></td>
+<td align="center"><b>Cross 3+1 Baseline</b><br><img src="docs/scenario_plots/Trained Viz/cross_3p1_baseline.gif" width="250"/><br><i>Model: PPO_cross_3p1_20251008_055141</i></td>
+<td align="center"><b>Cross 4-All Baseline</b><br><img src="docs/scenario_plots/Trained Viz/cross_4all_baseline.gif" width="250"/><br><i>Model: PPO_cross_4all_20251008_053820</i></td>
+</tr>
+</table>
+
+#### Merge Scenarios
+<table>
+<tr>
+<td align="center"><b>Merge 2x2 Baseline</b><br><img src="docs/scenario_plots/Trained Viz/merge_2x2_baseline.gif" width="250"/><br><i>Model: PPO_merge_2x2_20251008_170616</i></td>
+<td align="center"><b>Merge 3+1 Baseline</b><br><img src="docs/scenario_plots/Trained Viz/merge_3p1_baseline.gif" width="250"/><br><i>Model: PPO_merge_3p1_20251008_192721</i></td>
+<td align="center"><b>Merge 4-All Baseline</b><br><img src="docs/scenario_plots/Trained Viz/merge_4all_baseline.gif" width="250"/><br><i>Model: PPO_merge_4all_20251009_024636</i></td>
+</tr>
+</table>
+
+#### Generic Model Performance
+<table>
+<tr>
+<td align="center"><b>Generic Model (Cross 2x2 Test)</b><br><img src="docs/scenario_plots/Trained Viz/generic_baseline.gif" width="250"/><br><i>Model: PPO_generic_20251008_225941</i><br>Trained on dynamic conflicts, tested on representative scenario</td>
+</tr>
+</table>
+
+**Generating Baseline Visualizations:**
+```bash
+# Run all baseline visualizations automatically
+python run_baseline_visualizations.py --episodes 3 --fps 8
+
+# Preview commands without execution
+python run_baseline_visualizations.py --dry-run
+
+# Quick execution without GIF recording
+python run_baseline_visualizations.py --no-record-gifs
+
+# Custom settings
+python run_baseline_visualizations.py --episodes 5 --fps 10
+```
+
+**Output locations:**
+- GIF visualizations: `docs/scenario_plots/Trained Viz/`
+- Trajectory CSVs: `vis_results/`
+- Execution summary: `docs/scenario_plots/Trained Viz/baseline_visualization_results.json`
 
 ---
 
-## 📈 Key Results: Inter-Scenario Reliability
+## 📈 Key Results: Cross-Scenario Reliability Analysis
 
-Our survival analysis reveals dramatic safety degradation when models face unfamiliar scenarios:
+Our comprehensive analysis reveals critical insights into MARL policy robustness under distribution shifts through both **deterministic** (2 episodes per test) and **stochastic** (100 episodes per test) evaluation protocols.
 
-<table>
-<tr>
-<td align="center"><b>Canonical Crossing Model</b><br><img src="docs/survival_analysis/survival_curve_canonical_crossing.png" width="400"/></td>
-<td align="center"><b>Converging Model</b><br><img src="docs/survival_analysis/survival_curve_converging.png" width="400"/></td>
-</tr>
-<tr>
-<td align="center"><b>Head-On Model</b><br><img src="docs/survival_analysis/survival_curve_head_on.png" width="400"/></td>
-<td align="center"><b>Parallel Model</b><br><img src="docs/survival_analysis/survival_curve_parallel.png" width="400"/></td>
-</tr>
-<tr>
-<td align="center"><b>T-Formation Model</b><br><img src="docs/survival_analysis/survival_curve_t_formation.png" width="400"/></td>
-<td align="center"><b>Summary Statistics</b><br>(see docs/survival_analysis/survival_curve_statistics.csv)</td>
-</tr>
-</table>
+### Inter-Scenario Transfer Matrix (Deterministic)
 
-### Statistical Summary
+**Deterministic testing** (2 episodes) provides rapid assessment of worst-case cross-scenario performance:
 
-| Model (Trained On) | Test Scenario | Mean Min Sep (NM) | LoS Risk (%) | Median Min Sep (NM) |
-|-------------------|---------------|-------------------|--------------|---------------------|
-| PPO_head_on | **head_on** (baseline) | **13.75** | 3.4% | **13.11** |
-| PPO_head_on | converging (shift) | 0.93 | **100.0%** | 0.74 |
-| PPO_parallel | **parallel** (baseline) | **7.88** | 0.0% | **7.97** |
-| PPO_parallel | converging (shift) | 1.03 | **100.0%** | 0.97 |
-| PPO_converging | **converging** (baseline) | **5.61** | 23.8% | **6.25** |
-| PPO_converging | canonical_crossing (shift) | 1.74 | **100.0%** | 1.53 |
+<p align="center">
+<img src="docs/survival_analysis/fig5_x_inter_matrix_plos.png" width="800"/>
+<br>
+<b>Figure: Inter-Scenario LoS Risk Matrix (Deterministic)</b> - Loss of Separation probability when models trained on one scenario (rows) are tested on different scenarios (columns). Darker colors indicate higher collision risk.
+</p>
+
+**Key Observations:**
+- **Diagonal dominance**: Models achieve near-zero LoS on training scenarios (chase_2x2→chase_2x2: 0%, cross_3p1→cross_3p1: 0%)
+- **Cross-geometry failure**: Chase-trained models achieve 100% LoS on cross/merge scenarios; vice versa
+- **Generic model struggles**: Trained on mixed traffic, achieves 50-100% LoS across all test scenarios
+- **Complexity gradient**: Within-family transfers (chase_2x2→chase_3p1) show moderate degradation (0% → 50%)
+
+*Full deterministic results: [docs/survival_analysis/Intershift_determinsitic_survival_analysis/](docs/survival_analysis/Intershift_determinsitic_survival_analysis/)*
+
+---
+
+### Intra-Scenario Distribution Shifts (Stochastic)
+
+**Stochastic testing** (100 episodes) quantifies robustness to operational variability through targeted agent perturbations:
+
+<p align="center">
+<img src="docs/survival_analysis/fig5_y_intra_matrix_f1.png" width="900"/>
+<br>
+<b>Figure: Intra-Scenario Hallucination Detection F1 Scores</b> - Performance degradation when single agents experience speed, heading, position, aircraft type, or waypoint shifts. Higher F1 indicates better conflict prediction accuracy.
+</p>
+
+**Shift Category Analysis:**
+
+| Shift Type | Severity Range | Impact on F1 | Representative Cases |
+|------------|----------------|--------------|----------------------|
+| **Speed** | ±5 to ±35 kt | 📉 0.85 → 0.05 | Linear degradation beyond ±15 kt |
+| **Heading** | ±5° to ±35° | 📊 0.82 → 0.03 | Catastrophic failure at ±20°+ (U-shaped risk curve) |
+| **Position** | 0.05 to 0.4 NM | 📈 0.15 → 0.48 | Gradual decline with increased displacement |
+| **Aircraft Type** | B738 ↔ A320 | ⚠️ Variable | Depends on performance delta (speed/climb rate) |
+| **Waypoint** | Sequential shifts | 🔄 0.60 → 0.25 | Route-dependent sensitivity |
+
+**Critical Thresholds:**
+- **Speed shifts**: F1 < 0.5 beyond ±20 kt (8% of cruise speed)
+- **Heading shifts**: F1 < 0.1 beyond ±15° (complete spatial confusion)
+- **Position shifts**: F1 remains > 0.3 even at 0.4 NM (spatial robustness)
+
+*Full stochastic results: [docs/survival_analysis/Intershift_Stochastic_Survival_analysis/](docs/survival_analysis/Intershift_Stochastic_Survival_analysis/)*
+
+---
+
+### Statistical Summary: Baseline vs Shift Performance
+
+**Deterministic Cross-Scenario Transfer (2 episodes/scenario, 9 models × 9 scenarios = 81 tests):**
+
+| Model (Trained On) | Baseline Scenario | Mean Min Sep (NM) | LoS Risk | Cross-Scenario Avg Min Sep | Cross-Scenario Avg LoS |
+|-------------------|-------------------|-------------------|----------|---------------------------|------------------------|
+| **chase_2x2** | chase_2x2 | **6.01** | 0% | 2.98 | 77.8% |
+| **cross_3p1** | cross_3p1 | **13.05** | 0% | 3.76 | 66.7% |
+| **merge_2x2** | merge_2x2 | **12.83** | 0% | 2.45 | 77.8% |
+| **generic** | (mixed) | N/A | N/A | 2.51 | 88.9% |
+
+**Stochastic Within-Scenario Robustness (100 episodes/model, 10 models × 9 scenarios = 900 tests):**
+
+| Model Category | Baseline Mean Min Sep | Baseline LoS Risk | Cross-Test Mean Min Sep | Cross-Test LoS Risk |
+|----------------|----------------------|-------------------|-------------------------|---------------------|
+| **2×2 models** (n=3) | 9.60 ± 2.76 NM | 5.5% | 3.12 ± 1.84 NM | 74.2% |
+| **3+1 models** (n=3) | 8.73 ± 2.04 NM | 8.3% | 2.98 ± 1.67 NM | 78.6% |
+| **4-all models** (n=3) | 8.14 ± 2.95 NM | 18.4% | 2.87 ± 1.92 NM | 71.9% |
+| **Generic model** (n=1) | N/A (no baseline) | N/A | 3.02 ± 1.32 NM | 78.9% |
 
 **Key Findings:**
-- ✅ **Baseline performance**: Models maintain 5+ NM separation on training scenarios
-- ⚠️ **Cross-scenario failure**: 50-100% LoS risk when tested on different geometries
-- 📉 **Generic model**: Trained on dynamic conflicts shows moderate performance across all scenarios
-- 🎯 **Trade-off confirmed**: Scenario-specific models excel at training task but fail to generalize
+- ✅ **Training scenario mastery**: All models achieve mean separation > 6 NM on baseline scenarios (deterministic)
+- ⚠️ **Brittleness under shift**: 70-90% LoS risk when encountering unfamiliar geometries
+- 📉 **Complexity penalty**: 4-all models show 3× higher baseline LoS risk (18.4% vs 5.5% for 2×2)
+- 🎯 **Generalization-specialization trade-off**: Scenario-specific models excel at training task but catastrophically fail on cross-geometry tests
+- 🔬 **Stochastic validation**: 100-episode testing reveals 10-20% higher LoS rates than deterministic worst-case, highlighting sensitivity to initial conditions
 
-*Full statistics: [survival_analysis/survival_curve_statistics.csv](survival_analysis/survival_curve_statistics.csv)*
+*Full statistics:*
+- *Deterministic: [docs/survival_analysis/Intershift_determinsitic_survival_analysis/survival_curve_statistics.csv](docs/survival_analysis/Intershift_determinsitic_survival_analysis/survival_curve_statistics.csv)*
+- *Stochastic: [docs/survival_analysis/Intershift_Stochastic_Survival_analysis/survival_curve_statistics.csv](docs/survival_analysis/Intershift_Stochastic_Survival_analysis/survival_curve_statistics.csv)*
 
 ---
 
-## 🏗️ Project Architecture
+## � Training Performance & Convergence
+
+All models were trained using PPO with team-based reward shaping until achieving **perfect band** (5 consecutive conflict-free episodes). Training times and convergence metrics validate our experimental setup:
+
+### Training Convergence Summary
+
+| Scenario | Best Reward | Best Step | Total Steps | Time (hours) | First Zero Step | Perfect Step |
+|----------|-------------|-----------|-------------|--------------|-----------------|---------------|
+| **Chase 2×2** | 37.84 | 902k | 902k | 3.0 | 82k | 738k |
+| **Chase 3+1** | 25.45 | 1,099k | 1,099k | 3.8 | 16k | 902k |
+| **Chase 4-all** | 35.00 | 1,050k | 1,066k | 3.5 | 82k | **82k** |
+| **Cross 2×2** | 31.70 | 1,394k | 1,394k | 4.6 | 33k | 820k |
+| **Cross 3+1** | 22.56 | 2,968k | 3,001k | 9.5 | 98k | 1,312k |
+| **Cross 4-all** | 36.33 | 1,066k | 1,066k | 4.2 | 98k | 951k |
+| **Merge 2×2** | 36.08 | 869k | 869k | 2.3 | 98k | 574k |
+| **Merge 3+1** | 15.92 | 2,394k | 3,001k | 7.3 | 16k | 1,263k |
+| **Merge 4-all** | 2.02 | 2,526k | 3,001k | 5.1 | 66k | 2,034k |
+| **Generic** | -39.68 | 2,411k | 3,001k | 5.4 | 33k | 2,509k |
+
+**Column Definitions:**
+- **Best Reward**: Maximum episode reward achieved (optimal ≈ 40 for 4-agent scenarios)
+- **Best Step**: Training iteration where peak performance occurred
+- **Total Steps**: Full training duration (capped at 3M steps)
+- **Time (hours)**: Wall-clock training time (RTX 3090 GPU)
+- **First Zero Step**: First conflict-free episode
+- **Perfect Step**: First occurrence of 5 consecutive zero-conflict episodes
+
+**Key Insights:**
+- ⚡ **Fastest convergence**: Chase 4-all achieved perfect band in just 82k steps (3.5 hours)
+- ⏱️ **Slowest convergence**: Generic required 2.5M steps (5.4 hours) - indicating extreme coordination difficulty
+- 🎯 **Reward vs. optimal**: 2×2 scenarios achieved 80-95% of optimal reward (≈40); merge 4-all struggled at 5%
+- 🔄 **Overfitting detected**: Cross 3+1, Merge 3+1, Merge 4-all peaked mid-training then degraded
+- ✅ **Safety validation**: All scenarios achieved perfect band, confirming safety constraint learning
+
+*Detailed training analysis: [docs/Thesis_docs/Results_5.1_training.tex](docs/Thesis_docs/Results_5.1_training.tex)*
+
+---
+
+## �🏗️ Project Architecture
 
 This project follows a modular design with specialized components for each phase of the research workflow:
 

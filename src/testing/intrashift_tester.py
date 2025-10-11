@@ -1,9 +1,61 @@
 """
 Module Name: intrashift_tester.py
-Description: Intrashift distribution testing framework for MARL robustness evaluation.
-             Applies systematic perturbations to individual agents within a scenario to identify 
-             failure modes and test generalization beyond training distribution.
-             (Previously: targeted_shift_tester.py)
+Description: 
+    Intrashift distribution testing framework for MARL robustness evaluation.
+    Applies systematic perturbations to individual agents within a scenario to identify
+    failure modes and test generalization beyond training distribution.
+    
+    Intrashift Testing Methodology:
+        Tests model robustness to variations WITHIN the same scenario family.
+        Modifies individual agent parameters while keeping scenario geometry intact.
+        Compares perturbed episodes against baseline (unperturbed) episodes.
+    
+    Shift Taxonomy:
+        Position Shifts:
+            - lateral_offset: Move agent perpendicular to heading (±5, ±10 NM)
+            - longitudinal_offset: Move agent along heading axis (±5, ±10 NM)
+        
+        Heading Shifts:
+            - heading_offset: Rotate agent heading (±10, ±20 deg)
+        
+        Speed Shifts:
+            - speed_offset: Modify agent speed (±25, ±50 kt)
+        
+        Waypoint Shifts:
+            - waypoint_lateral: Move waypoint perpendicular (±5, ±10 NM)
+            - waypoint_longitudinal: Move waypoint along path (±5, ±10 NM)
+    
+    Testing Protocol:
+        1. Load trained model checkpoint
+        2. Load baseline scenario JSON
+        3. For each target agent:
+            a. Run baseline episodes (N seeds for determinism validation)
+            b. Apply shift to target agent
+            c. Run shifted episodes (same N seeds)
+            d. Compare metrics: LoS rate, collision rate, reach rate, hallucination
+        4. Generate paired visualizations and statistical analysis
+    
+    Safety Guards:
+        - Minimum start separation: Enforce ≥10 NM after shifts
+        - Conflict zone validation: Ensure shifts create testable scenarios
+        - Seed determinism: Paired baseline/shift use identical seeds
+    
+    Output Structure:
+        results/
+            intrashift_{scenario}_{timestamp}/
+                baseline/
+                    traj_A1_seed42.json
+                    traj_A1_seed42.csv
+                    ...
+                shifted/
+                    traj_A1_lateral+5nm_seed42.json
+                    ...
+                summary.csv
+                analysis_dashboard.html
+                shift_comparison_maps.html
+
+    (Previously: targeted_shift_tester.py)
+
 Author: Som
 Date: 2025-10-04
 """
@@ -62,14 +114,24 @@ def _compute_metrics_from_trajectory_json(json_path: str, sep_nm: float = 5.0) -
     """
     Compute hallucination metrics from trajectory JSON file using HallucinationDetector.
     
-    This is used as a fallback when CSV extraction fails or CSV is missing.
+    Fallback method when CSV extraction fails or CSV is missing.
+    Uses same HallucinationDetector configuration as environment:
+        - TCPA/DCPA horizon: 120 s
+        - Action thresholds: 3° heading, 5 kt speed
+        - Resolution window: 60 s
+        - N-of-M debouncing: 2-of-3 (reduces transient false alerts)
+        - IoU matching: 0.1 threshold for temporal window overlap
     
     Args:
-        json_path: Path to trajectory JSON file
-        sep_nm: Separation threshold in nautical miles
+        json_path: Path to trajectory JSON file.
+        sep_nm: Separation threshold (NM, default 5.0 for well-clear).
     
     Returns:
-        Dictionary of metrics computed by HallucinationDetector
+        Dictionary of metrics:
+            - precision, recall, f1_score: Alert quality metrics
+            - alert_count, gt_conflict_count: Event counts
+            - tp, fp, fn, tn: Confusion matrix elements
+            - resolution_tactical, resolution_strategic: Resolution rates
     """
     try:
         if not os.path.exists(json_path):
@@ -106,13 +168,35 @@ def _compute_agent_role(agent_data: Dict[str, Any], center_lat: float, center_lo
     """
     Compute geometric role (heading class × lane side) for an agent.
     
+    Role Taxonomy:
+        Heading class: Nearest 90° cardinal direction (N/E/S/W)
+            - N: 315° ≤ hdg < 45° (northbound)
+            - E: 45° ≤ hdg < 135° (eastbound)
+            - S: 135° ≤ hdg < 225° (southbound)
+            - W: 225° ≤ hdg < 315° (westbound)
+        
+        Lane side: Position relative to scenario center (west/center/east)
+            - west: lon < center_lon - 0.05° (~3 NM at 51° lat)
+            - center: |lon - center_lon| ≤ 0.05°
+            - east: lon > center_lon + 0.05°
+    
+    Combined role examples:
+        - "N_west": Northbound agent on west lane
+        - "E_center": Eastbound agent on centerline
+        - "S_east": Southbound agent on east lane
+    
+    Used for:
+        - Identifying agent symmetry in conflict scenarios
+        - Grouping agents by geometric similarity
+        - Analyzing role-specific performance degradation
+    
     Args:
-        agent_data: Agent configuration with lat, lon, hdg_deg
-        center_lat: Scenario center latitude
-        center_lon: Scenario center longitude
+        agent_data: Agent configuration dict with 'lat', 'lon', 'hdg_deg' keys.
+        center_lat: Scenario center latitude (deg).
+        center_lon: Scenario center longitude (deg).
     
     Returns:
-        Role string like "N_west", "E_center", "S_east", "W_center"
+        Role string format: "{heading_class}_{lane_side}" (e.g., "N_west").
     """
     hdg = agent_data["hdg_deg"]
     lat = agent_data["lat"]
@@ -215,17 +299,31 @@ def _haversine_nm(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
 
 
 def _check_start_separation(scenario_path: str, shift_config: Dict[str, Dict[str, float]], 
-                           separation_threshold_nm: float = 5.0) -> Tuple[bool, float]:
+                           separation_threshold_nm: float = 6.0) -> Tuple[bool, float]:
     """
     Check if applying shifts would cause t=0 conflict (start in LoS).
     
+    Safety Guard Algorithm:
+        1. Load baseline scenario geometry
+        2. Apply position shifts (lat/lon deltas) to all agents
+        3. Compute pairwise separations using haversine formula
+        4. Validate minimum separation ≥ threshold
+    
+    Purpose:
+        Prevents invalid test scenarios where agents start in conflict.
+        Ensures shifts create testable scenarios (not trivially unsafe).
+        Maintains minimum 6 NM buffer above 5 NM well-clear threshold.
+    
     Args:
-        scenario_path: Path to scenario JSON file
-        shift_config: Per-agent shift deltas
-        separation_threshold_nm: Minimum acceptable separation (default 5.0 NM)
+        scenario_path: Path to baseline scenario JSON file.
+        shift_config: Per-agent shift deltas dict:
+            {agent_id: {"position_lat_delta": deg, "position_lon_delta": deg}}.
+        separation_threshold_nm: Minimum acceptable start separation (NM, default 6.0).
     
     Returns:
-        (is_safe, min_separation_nm) tuple
+        (is_safe, min_separation_nm) tuple:
+            - is_safe: True if min_separation ≥ threshold
+            - min_separation_nm: Minimum pairwise separation after shifts
     """
     with open(scenario_path, "r") as f:
         scenario_data = json.load(f)
@@ -264,20 +362,75 @@ def create_targeted_shift(agent_id: str, shift_type: str, shift_value: float, sc
     """
     Create targeted shift configuration affecting specific agent(s).
     
-    This function generates shift parameters that modify only the specified agent
-    while keeping others at baseline conditions, enabling isolation of individual
-    agent impact on system behavior.
+    Generates shift parameters that modify only the specified agent while keeping
+    others at baseline conditions. Enables isolation of individual agent impact on
+    system behavior for robustness analysis.
+    
+    Shift Type Taxonomy:
+        speed: Airspeed variations
+            - Range: ±2 to ±50 kt
+            - Micro shifts: ±2, ±5 kt (small perturbations)
+            - Macro shifts: ±25, ±50 kt (large perturbations)
+            - Tests: Speed management, in-trail conflicts
+        
+        position_closer: Longitudinal position shifts (along lat axis)
+            - Range: ±0.03 to ±0.35 deg (~2-20 NM at 51° lat)
+            - Positive: Move north (closer to northern agents)
+            - Negative: Move south (closer to southern agents)
+            - Tests: Start position sensitivity, conflict timing
+        
+        position_lateral: Lateral position shifts (along lon axis)
+            - Range: ±0.03 to ±0.4 deg (~2-20 NM at 51° lat)
+            - Positive: Move east
+            - Negative: Move west
+            - Tests: Lane crossing, lateral separation management
+        
+        heading: Heading deviations
+            - Range: ±2 to ±35 deg
+            - Micro shifts: ±2, ±5 deg (small angular deviations)
+            - Macro shifts: ±10, ±20, ±35 deg (large angular deviations)
+            - Tests: Trajectory convergence, crossing angles
+        
+        aircraft_type: Aircraft model changes
+            - Options: B737, B747, CRJ9, A320 (default)
+            - Tests: Performance characteristic variations
+            - Note: May affect dynamics if BlueSky models differ
+        
+        waypoint: Destination shifts
+            - Range: ±0.03 to ±0.3 deg (~2-18 NM)
+            - Cardinal directions: N, S, E, W
+            - Diagonal directions: NE, SE, SW, NW
+            - Tests: Goal sensitivity, path planning robustness
+        
+        wind: Environmental wind conditions
+            - Speed: 10-35 kt
+            - Directions: 8-12 cardinal/ordinal headings
+            - Tests: Environmental disturbance rejection
+    
+    Special Cases:
+        - agent_id="ALL": Apply shift to all agents simultaneously
+        - Used for system-wide perturbations (wind, scenario scaling)
     
     Args:
-        agent_id: Target agent identifier or "ALL" for system-wide changes
-        shift_type: Category of modification (speed, position_closer, position_lateral, 
-                   heading, aircraft_type, waypoint)
-        shift_value: Magnitude of shift in appropriate units (kt, degrees, etc.)
-        scenario_agents: Complete list of agent IDs in the scenario
-        shift_data: Additional parameters for complex shifts (aircraft types, coordinates)
+        agent_id: Target agent identifier or "ALL" for system-wide changes.
+        shift_type: Category of modification (speed, position_closer, position_lateral,
+                    heading, aircraft_type, waypoint, wind).
+        shift_value: Magnitude of shift in appropriate units:
+            - speed: kt
+            - position_*: degrees
+            - heading: degrees
+            - aircraft_type: unused (shift_data contains type string)
+            - waypoint: unused (shift_data contains lat/lon dict)
+            - wind: kt (speed)
+        scenario_agents: Complete list of agent IDs in the scenario.
+        shift_data: Additional parameters for complex shifts:
+            - aircraft_type: String like "B737", "B747"
+            - waypoint: Dict {"lat": deg_delta, "lon": deg_delta}
+            - wind: Dict {"speed_kt": float, "direction_deg": float}
     
     Returns:
-        Dictionary mapping agent IDs to their respective shift configurations
+        Dictionary mapping agent IDs to their respective shift configurations:
+            {agent_id: {"speed_kt_delta": float, "heading_deg_delta": float, ...}}
     """
     shift_config = {}
     
@@ -310,6 +463,10 @@ def create_targeted_shift(agent_id: str, shift_type: str, shift_value: float, sc
                     shift_config[aid] = {"waypoint_lat_delta": shift_data["lat"], "waypoint_lon_delta": shift_data["lon"]}
                 else:
                     shift_config[aid] = {}
+            elif shift_type == "wind":
+                # Wind affects all agents (environmental shift)
+                # Wind config will be applied separately via env_shift
+                shift_config[aid] = {}
             else:
                 shift_config[aid] = {}
         else:
@@ -319,7 +476,7 @@ def create_targeted_shift(agent_id: str, shift_type: str, shift_value: float, sc
     return shift_config
 
 
-def _create_wind_config_for_shift(test_id: str, shift_type: str, shift_value: float) -> Dict[str, Any]:
+def _create_wind_config_for_shift(test_id: str, shift_type: str, shift_value: float, shift_data: Optional[Any] = None) -> Dict[str, Any]:
     """
     Create wind and noise configuration based on the shift type and characteristics.
     
@@ -327,6 +484,7 @@ def _create_wind_config_for_shift(test_id: str, shift_type: str, shift_value: fl
         test_id: Unique test identifier
         shift_type: Type of shift being applied
         shift_value: Magnitude of the shift
+        shift_data: Additional shift data (e.g., explicit wind configuration)
     
     Returns:
         Dictionary containing wind and noise configuration
@@ -335,6 +493,11 @@ def _create_wind_config_for_shift(test_id: str, shift_type: str, shift_value: fl
     env_shift: Dict[str, Any] = {
         # Wind configuration will be added based on shift type
     }
+    
+    # Handle explicit wind shifts
+    if shift_type == "wind" and shift_data and isinstance(shift_data, dict):
+        env_shift["wind"] = shift_data
+        return env_shift
     
     # Different wind configurations based on shift characteristics
     if "baseline" in test_id:
@@ -439,11 +602,11 @@ def create_conflict_inducing_shifts(scenario_agents: List[str], scenario_name: s
     baseline_agent = scenario_agents[0] if scenario_agents else "A1"
     shifts.append(("baseline", baseline_agent, "speed", 0.0, "Baseline (no shifts)", None))
     
-    # Speed variations - micro to macro range
-    # Micro changes (small perturbations)
-    speed_micro = [-10, -5, 5, 10]  # ±10 kt
-    # Macro changes (large deviations to test failure modes)
-    speed_macro = [-30, -20, 20, 30]  # ±30 kt
+    # Speed variations - micro to macro range (more granular)
+    # Micro changes (small perturbations) - finer gradations
+    speed_micro = [-10, -8, -5, -2, 2, 5, 8, 10]  # ±2 to ±10 kt in gradual steps
+    # Macro changes (large deviations to test failure modes) - extended range
+    speed_macro = [-35, -30, -25, -20, -15, 15, 20, 25, 30, 35]  # ±15 to ±35 kt
     
     for agent in scenario_agents:
         # Micro speed changes
@@ -463,9 +626,9 @@ def create_conflict_inducing_shifts(scenario_agents: List[str], scenario_name: s
     is_chase = "chase" in scenario_name
     
     if len(scenario_agents) >= 2:
-        # Moving agents closer together (reducing separation)
-        position_closer_micro = [0.05, 0.1, 0.15]  # 0.05-0.15 degrees ≈ 3-9 NM closer
-        position_closer_macro = [0.2, 0.3]    # Cap at 0.3 for safety
+        # Moving agents closer together (reducing separation) - more granular
+        position_closer_micro = [0.03, 0.05, 0.08, 0.1, 0.12, 0.15]  # 0.03-0.15 degrees ≈ 2-9 NM (gradual)
+        position_closer_macro = [0.18, 0.2, 0.25, 0.3, 0.35]    # Extended range up to 0.35 deg
         
         for agent in scenario_agents:
             # For chase, determine safe direction (away from nearest neighbor)
@@ -492,15 +655,15 @@ def create_conflict_inducing_shifts(scenario_agents: List[str], scenario_name: s
                 desc = f"{agent} moved {delta:.2f}° south (major shift)"
                 shifts.append((test_id, agent, "position_closer", -delta, desc, None))
     
-    # Lateral (crossing) position shifts with geometry-based caps
+    # Lateral (crossing) position shifts with geometry-based caps - more granular
     # Merge/chase scenarios need tighter caps to avoid t=0 conflicts
     is_merge_chase = any(x in scenario_name for x in ["merge", "chase"])
     
-    lateral_micro = [0.05, 0.1, 0.15]  # Small lateral deviations
+    lateral_micro = [0.03, 0.05, 0.08, 0.1, 0.12, 0.15]  # Small lateral deviations (gradual)
     if is_merge_chase:
-        lateral_macro = [0.2]  # Cap at 0.20° for merge/chase (geometry constraint)
+        lateral_macro = [0.18, 0.2, 0.25]  # Extended range for merge/chase (with 6 NM threshold)
     else:
-        lateral_macro = [0.2, 0.3]  # Cross scenarios can handle more
+        lateral_macro = [0.2, 0.25, 0.3, 0.35, 0.4]  # Cross scenarios can handle more
     
     for agent in scenario_agents:
         for delta in lateral_micro + lateral_macro:
@@ -515,9 +678,9 @@ def create_conflict_inducing_shifts(scenario_agents: List[str], scenario_name: s
             desc = f"Agent {agent} lateral {range_type}-shift: {delta:.2f}° west"
             shifts.append((test_id, agent, "position_lateral", -delta, desc, None))
     
-    # Heading deviations - creating converging/diverging paths
-    heading_micro = [-10, -5, 5, 10]    # ±10 degrees
-    heading_macro = [-30, -20, 20, 30]  # ±30 degrees
+    # Heading deviations - creating converging/diverging paths (more granular)
+    heading_micro = [-10, -8, -5, -2, 2, 5, 8, 10]    # ±2 to ±10 degrees (gradual)
+    heading_macro = [-35, -30, -25, -20, -15, 15, 20, 25, 30, 35]  # ±15 to ±35 degrees (extended)
     
     for agent in scenario_agents:
         # Micro heading changes
@@ -548,23 +711,47 @@ def create_conflict_inducing_shifts(scenario_agents: List[str], scenario_name: s
         desc = f"All agents aircraft type: {aircraft_type}"
         shifts.append((test_id, "ALL", "aircraft_type", 0.0, desc, aircraft_type))
     
-    # Waypoint variations - test different destinations
-    # Micro waypoint shifts (small deviations)
+    # Waypoint variations - test different destinations (more granular)
+    # Micro waypoint shifts (small deviations with intermediate steps)
     waypoint_micro = [
+        {"lat": 0.03, "lon": 0.0, "desc": "north_0.03deg"},
         {"lat": 0.05, "lon": 0.0, "desc": "north_0.05deg"},
+        {"lat": 0.08, "lon": 0.0, "desc": "north_0.08deg"},
+        {"lat": -0.03, "lon": 0.0, "desc": "south_0.03deg"},
         {"lat": -0.05, "lon": 0.0, "desc": "south_0.05deg"},
+        {"lat": -0.08, "lon": 0.0, "desc": "south_0.08deg"},
+        {"lat": 0.0, "lon": 0.03, "desc": "east_0.03deg"},
         {"lat": 0.0, "lon": 0.05, "desc": "east_0.05deg"},
-        {"lat": 0.0, "lon": -0.05, "desc": "west_0.05deg"}
+        {"lat": 0.0, "lon": 0.08, "desc": "east_0.08deg"},
+        {"lat": 0.0, "lon": -0.03, "desc": "west_0.03deg"},
+        {"lat": 0.0, "lon": -0.05, "desc": "west_0.05deg"},
+        {"lat": 0.0, "lon": -0.08, "desc": "west_0.08deg"}
     ]
     
-    # Macro waypoint shifts (large deviations)
+    # Macro waypoint shifts (large deviations with extended range)
     waypoint_macro = [
+        {"lat": 0.15, "lon": 0.0, "desc": "north_0.15deg"},
         {"lat": 0.2, "lon": 0.0, "desc": "north_0.2deg"},
+        {"lat": 0.25, "lon": 0.0, "desc": "north_0.25deg"},
+        {"lat": 0.3, "lon": 0.0, "desc": "north_0.3deg"},
+        {"lat": -0.15, "lon": 0.0, "desc": "south_0.15deg"},
         {"lat": -0.2, "lon": 0.0, "desc": "south_0.2deg"},
+        {"lat": -0.25, "lon": 0.0, "desc": "south_0.25deg"},
+        {"lat": -0.3, "lon": 0.0, "desc": "south_0.3deg"},
+        {"lat": 0.0, "lon": 0.15, "desc": "east_0.15deg"},
         {"lat": 0.0, "lon": 0.2, "desc": "east_0.2deg"},
+        {"lat": 0.0, "lon": 0.25, "desc": "east_0.25deg"},
+        {"lat": 0.0, "lon": 0.3, "desc": "east_0.3deg"},
+        {"lat": 0.0, "lon": -0.15, "desc": "west_0.15deg"},
         {"lat": 0.0, "lon": -0.2, "desc": "west_0.2deg"},
+        {"lat": 0.0, "lon": -0.25, "desc": "west_0.25deg"},
+        {"lat": 0.0, "lon": -0.3, "desc": "west_0.3deg"},
         {"lat": 0.15, "lon": 0.15, "desc": "northeast_0.15deg"},
-        {"lat": -0.15, "lon": -0.15, "desc": "southwest_0.15deg"}
+        {"lat": 0.2, "lon": 0.2, "desc": "northeast_0.2deg"},
+        {"lat": -0.15, "lon": -0.15, "desc": "southwest_0.15deg"},
+        {"lat": -0.2, "lon": -0.2, "desc": "southwest_0.2deg"},
+        {"lat": 0.15, "lon": -0.15, "desc": "northwest_0.15deg"},
+        {"lat": -0.15, "lon": 0.15, "desc": "southeast_0.15deg"}
     ]
     
     for agent in scenario_agents:
@@ -581,6 +768,48 @@ def create_conflict_inducing_shifts(scenario_agents: List[str], scenario_name: s
             desc = f"Agent {agent} waypoint macro-shift: {wp_shift['desc']}"
             wp_data = {"lat": wp_shift["lat"], "lon": wp_shift["lon"]}
             shifts.append((test_id, agent, "waypoint", 0.0, desc, wp_data))
+    
+    # Wind variations - environmental shifts affecting all agents
+    # Micro wind changes (light winds)
+    wind_micro = [
+        {"dir": 0, "kt": 10, "desc": "north_10kt"},
+        {"dir": 90, "kt": 10, "desc": "east_10kt"},
+        {"dir": 180, "kt": 10, "desc": "south_10kt"},
+        {"dir": 270, "kt": 10, "desc": "west_10kt"},
+        {"dir": 0, "kt": 15, "desc": "north_15kt"},
+        {"dir": 90, "kt": 15, "desc": "east_15kt"},
+        {"dir": 180, "kt": 15, "desc": "south_15kt"},
+        {"dir": 270, "kt": 15, "desc": "west_15kt"}
+    ]
+    
+    # Macro wind changes (strong winds and crosswinds)
+    wind_macro = [
+        {"dir": 0, "kt": 25, "desc": "north_25kt"},
+        {"dir": 90, "kt": 25, "desc": "east_25kt"},
+        {"dir": 180, "kt": 25, "desc": "south_25kt"},
+        {"dir": 270, "kt": 25, "desc": "west_25kt"},
+        {"dir": 0, "kt": 35, "desc": "north_35kt"},
+        {"dir": 90, "kt": 35, "desc": "east_35kt"},
+        {"dir": 180, "kt": 35, "desc": "south_35kt"},
+        {"dir": 270, "kt": 35, "desc": "west_35kt"},
+        {"dir": 45, "kt": 30, "desc": "northeast_30kt"},
+        {"dir": 135, "kt": 30, "desc": "southeast_30kt"},
+        {"dir": 225, "kt": 30, "desc": "southwest_30kt"},
+        {"dir": 315, "kt": 30, "desc": "northwest_30kt"}
+    ]
+    
+    # Apply wind shifts to all agents (system-wide environmental effect)
+    for wind_shift in wind_micro:
+        test_id = f"wind_micro_ALL_{wind_shift['desc']}"
+        desc = f"All agents wind micro-shift: {wind_shift['desc']}"
+        wind_data = {"mode": "uniform", "dir_deg": wind_shift["dir"], "kt": wind_shift["kt"]}
+        shifts.append((test_id, "ALL", "wind", wind_shift["kt"], desc, wind_data))
+    
+    for wind_shift in wind_macro:
+        test_id = f"wind_macro_ALL_{wind_shift['desc']}"
+        desc = f"All agents wind macro-shift: {wind_shift['desc']}"
+        wind_data = {"mode": "uniform", "dir_deg": wind_shift["dir"], "kt": wind_shift["kt"]}
+        shifts.append((test_id, "ALL", "wind", wind_shift["kt"], desc, wind_data))
     
     return shifts
 
@@ -777,16 +1006,17 @@ def _save_targeted_run_metadata(results_dir: str, repo_root: str, checkpoint_pat
         "scenario": f"{scenario_name}.json",
         "representative_agents": scenario_agents,
         "deduplication_method": "geometric_role (heading_class × lane_side)",
-        "shift_types": ["speed", "position_closer", "position_lateral", "heading", "aircraft_type", "waypoint"],
+        "shift_types": ["speed", "position_closer", "position_lateral", "heading", "aircraft_type", "waypoint", "wind"],
         "shift_ranges": ["micro", "macro"],
-        "speed_shifts_kt": {"micro": "±5 to ±10", "macro": "±20 to ±30"},
-        "position_shifts_deg": {"micro": "±0.05 to ±0.15", "macro": "±0.2 to ±0.4"},
-        "heading_shifts_deg": {"micro": "±5 to ±10", "macro": "±20 to ±30"},
+        "speed_shifts_kt": {"micro": "±2 to ±10 (gradual)", "macro": "±15 to ±35 (extended)"},
+        "position_shifts_deg": {"micro": "±0.03 to ±0.15 (gradual)", "macro": "±0.18 to ±0.35 (extended)"},
+        "heading_shifts_deg": {"micro": "±2 to ±10 (gradual)", "macro": "±15 to ±35 (extended)"},
         "aircraft_types": ["B737", "B747", "CRJ9"],
-        "waypoint_shifts_deg": {"micro": "±0.05", "macro": "±0.15 to ±0.2"},
+        "waypoint_shifts_deg": {"micro": "±0.03 to ±0.08 (gradual)", "macro": "±0.15 to ±0.3 (extended)"},
+        "wind_shifts": {"micro": "10-15 kt (4 directions)", "macro": "25-35 kt (8 directions)"},
         "total_shift_configurations": int(total_shifts),
         "total_episodes": int(episodes_per_shift * total_shifts),
-        "separation_threshold_nm": 5.0,
+        "separation_threshold_nm": 6.0,
         "conflict_detection_focus": "Single agent modifications to induce conflicts",
         "hallucination_detector": {
             "horizon_s": 120.0,
@@ -961,7 +1191,8 @@ def run_intrashift_grid(repo_root: str,
                         episodes_per_shift: int = 5,
                         seeds: Optional[List[int]] = None,
                         generate_viz: bool = False,
-                        outdir: Optional[str] = None) -> str:
+                        outdir: Optional[str] = None,
+                        explore: bool = False) -> str:
     """
     Run intrashift testing where only one agent is modified per test case within a scenario.
     
@@ -973,6 +1204,7 @@ def run_intrashift_grid(repo_root: str,
         episodes_per_shift: Number of episodes to run per shift configuration
         seeds: List of random seeds to use for episodes
         generate_viz: Whether to generate visualization artifacts
+        explore: If True, use stochastic policy (explore=True). If False, deterministic (explore=False).
     
     Returns:
         Path to the main summary CSV file
@@ -1016,7 +1248,7 @@ def run_intrashift_grid(repo_root: str,
     base_env_config = {
         "scenario_path": scenario_path,
         "action_delay_steps": 0,
-        "max_episode_steps": 100,
+        "max_episode_steps": 150,  # Match training configuration
         "separation_nm": 5.0,
         "log_trajectories": True,
         "results_dir": results_dir,
@@ -1153,16 +1385,16 @@ def run_intrashift_grid(repo_root: str,
             # Create targeted shift configuration
             shift_config = create_targeted_shift(agent_id, shift_type, shift_value, all_scenario_agents, shift_data)
             
-            # CRITICAL: Apply t=0 conflict guard (5 NM separation threshold)
-            is_safe, min_sep_nm = _check_start_separation(scenario_path, shift_config, separation_threshold_nm=5.0)
+            # CRITICAL: Apply t=0 conflict guard (6 NM separation threshold for more freedom)
+            is_safe, min_sep_nm = _check_start_separation(scenario_path, shift_config, separation_threshold_nm=6.0)
             
             if not is_safe:
-                LOGGER.warning(f"Skipping {ep_tag}: t=0 separation too small ({min_sep_nm:.2f} NM < 5.0 NM threshold)")
+                LOGGER.warning(f"Skipping {ep_tag}: t=0 separation too small ({min_sep_nm:.2f} NM < 6.0 NM threshold)")
                 skipped_count += 1
                 continue
             
-            # Create environmental shift configuration (wind + noise) based on shift type
-            env_shift = _create_wind_config_for_shift(test_id, shift_type, shift_value)
+            # Create environmental shift configuration (wind) based on shift type
+            env_shift = _create_wind_config_for_shift(test_id, shift_type, shift_value, shift_data)
             
             # Build env with proper wrapper
             env = MARLCollisionEnv(env_config)
@@ -1226,7 +1458,7 @@ def run_intrashift_grid(repo_root: str,
                 act = {}
                 for aid in env.agents:
                     if aid in obs:
-                        a = algo.compute_single_action(obs[aid], explore=True, policy_id=policy_id)
+                        a = algo.compute_single_action(obs[aid], explore=explore, policy_id=policy_id)
                         act[aid] = a
                         
                         # DEBUG: Log first few actions to verify magnitude (only for baseline to reduce noise)
@@ -1304,141 +1536,95 @@ def run_intrashift_grid(repo_root: str,
                 try:
                     df = pd.read_csv(csv_path)
                     
-                    # CRITICAL FIX: Collapse per-step series across agents using groupby(step_idx).max()
-                    # This prevents double-counting each timestep (once per agent row)
-                    step_collapsed = df.groupby('step_idx').agg({
-                        'tp': 'max',  # Use max because tp/fp/fn/tn are step-level flags (0 or 1)
-                        'fp': 'max',
-                        'fn': 'max', 
-                        'tn': 'max',
-                        'gt_conflict': 'max',  # Ground truth conflict at each step
-                        'predicted_alert': 'max',  # Predicted alert at each step
-                        'conflict_flag': 'max',  # Conflict flag at each step
-                        'min_separation_nm': 'min',  # Minimum separation across all agent pairs
-                        'sim_time_s': 'mean'  # Average simulation time (should be consistent)
-                    }).reset_index()
+                    # Build trajectory structure for HallucinationDetector
+                    from src.testing.intershift_matrix import _build_trajectory_from_csv
+                    trajectory = _build_trajectory_from_csv(df)
                     
-                    # Calculate episode-level metrics from step-collapsed data
-                    total_steps = len(step_collapsed)
-                    # Calculate actual flight time as end_time - start_time
-                    if not step_collapsed.empty:
-                        start_time_s = step_collapsed['sim_time_s'].min()
-                        end_time_s = step_collapsed['sim_time_s'].max()
-                        episode_time_s = end_time_s - start_time_s
+                    # Initialize detector with standard parameters (matching environment config)
+                    from src.analysis.hallucination_detector_enhanced import HallucinationDetector
+                    hd = HallucinationDetector(
+                        horizon_s=120.0,
+                        action_thresh=(3.0, 5.0),  # 3° heading, 5 kt speed
+                        res_window_s=60.0,
+                        action_period_s=10.0,
+                        los_threshold_nm=5.0,
+                        lag_pre_steps=1,
+                        lag_post_steps=1,
+                        debounce_n=2,
+                        debounce_m=3,
+                        iou_threshold=0.1
+                    )
+                    
+                    # Compute all metrics from detector (authoritative source)
+                    detector_metrics = hd.compute(trajectory, sep_nm=5.0, return_series=False)
+                    
+                    # Extract event-based confusion matrix metrics (event counts, not step sums)
+                    tp = detector_metrics.get("tp", 0)
+                    fp = detector_metrics.get("fp", 0)
+                    fn = detector_metrics.get("fn", 0)
+                    tn = detector_metrics.get("tn", 0)  # TN is in timesteps (different unit)
+                    
+                    # Extract precision, recall, F1 (computed from event counts)
+                    precision = detector_metrics.get("precision", 0.0)
+                    recall = detector_metrics.get("recall", 0.0)
+                    f1_score = detector_metrics.get("f1_score", 0.0)
+                    
+                    # Extract LoS metrics from detector (authoritative)
+                    num_los_events = detector_metrics.get("num_los_events", 0)
+                    total_los_duration = detector_metrics.get("total_los_duration", 0.0)
+                    min_separation_nm = detector_metrics.get("min_separation_nm", 200.0)
+                    num_conflict_steps = detector_metrics.get("num_conflict_steps", 0)
+                    
+                    # Extract intervention metrics from detector (authoritative)
+                    num_interventions = detector_metrics.get("num_interventions", 0)
+                    num_interventions_matched = detector_metrics.get("num_interventions_matched", 0)
+                    num_interventions_false = detector_metrics.get("num_interventions_false", 0)
+                    
+                    # Extract ghost/missed conflict rates (authoritative formulas)
+                    ghost_conflict = detector_metrics.get("ghost_conflict", 0.0)
+                    missed_conflict = detector_metrics.get("missed_conflict", 0.0)
+                    
+                    # Extract alert metrics from detector
+                    alert_duty_cycle = detector_metrics.get("alert_duty_cycle", 0.0)
+                    total_alert_time_s = detector_metrics.get("total_alert_time_s", 0.0)
+                    avg_lead_time_s = detector_metrics.get("avg_lead_time_s", 0.0)
+                    
+                    # Extract resolution and oscillation metrics from detector
+                    resolution_fail_rate = detector_metrics.get("resolution_fail_rate", 0.0)
+                    los_failure_rate = detector_metrics.get("los_failure_rate", 0.0)
+                    oscillation_rate = detector_metrics.get("oscillation_rate", 0.0)
+                    
+                    # Extract path efficiency (time-based definition: min(1.0, 300s/flight_time_s))
+                    path_efficiency = detector_metrics.get("path_efficiency", 1.0)
+                    flight_time_s = detector_metrics.get("flight_time_s", 0.0)
+                    
+                    # Compute alerts_per_min (time-normalized)
+                    if flight_time_s > 0:
+                        alerts_per_min = (total_alert_time_s / max(1.0, flight_time_s / 60.0))
                     else:
-                        episode_time_s = 0.0
+                        alerts_per_min = 0.0
                     
-                    # Basic confusion matrix metrics (step-level aggregation)
-                    tp_sum = int(step_collapsed['tp'].sum())
-                    fp_sum = int(step_collapsed['fp'].sum())
-                    fn_sum = int(step_collapsed['fn'].sum())
-                    tn_sum = int(step_collapsed['tn'].sum())
-                    
-                    # Alert duty cycle: fraction of time an alert is active
-                    alert_duty_cycle = float(step_collapsed['predicted_alert'].mean()) if total_steps > 0 else 0.0
-                    
-                    # Alert burden metrics: operator load
-                    total_alert_time_s = float(step_collapsed['predicted_alert'].sum() * 10.0)  # 10s per step
-                    alerts_per_min = (total_alert_time_s / max(1.0, episode_time_s / 60.0)) if episode_time_s > 0 else 0.0
-                    
-                    # Event-level precision, recall, F1 (post IoU matching)
-                    # Handle cases where the model generates no alerts (all predictions are 0)
-                    if tp_sum + fp_sum == 0:
-                        # No alerts generated - precision undefined, but we'll use 0
-                        precision = 0.0
-                    else:
-                        precision = tp_sum / (tp_sum + fp_sum)
-                    
-                    if tp_sum + fn_sum == 0:
-                        # No actual conflicts - recall undefined, but we'll use 1.0 (perfect)
-                        recall = 1.0
-                    else:
-                        recall = tp_sum / (tp_sum + fn_sum)
-                    
-                    if precision + recall == 0:
-                        f1_score = 0.0
-                    else:
-                        f1_score = 2 * precision * recall / (precision + recall)
-                    
-                    # Lead time analysis (negative = early alerts, positive = late alerts)
-                    # Calculate avg lead time from first alert to first conflict for each episode
-                    lead_times = []
-                    
-                    # Find alert and conflict transitions  
-                    gt_flags = step_collapsed['gt_conflict'].values
-                    alert_flags = step_collapsed['predicted_alert'].values
-                    
-                    # Find first alert and first conflict  
-                    first_alert_idx = None
-                    first_conflict_idx = None
-                    
-                    for i in range(len(alert_flags)):
-                        if alert_flags[i] == 1 and first_alert_idx is None:
-                            first_alert_idx = i
-                        if gt_flags[i] == 1 and first_conflict_idx is None:
-                            first_conflict_idx = i
-                        if first_alert_idx is not None and first_conflict_idx is not None:
-                            break
-                    
-                    if first_alert_idx is not None and first_conflict_idx is not None:
-                        # Lead time in seconds (10s per step)
-                        lead_time_s = (first_alert_idx - first_conflict_idx) * 10.0
-                        lead_times.append(lead_time_s)
-                    elif first_conflict_idx is not None and first_alert_idx is None:
-                        # Conflict occurred but no alert - infinite late response
-                        lead_times.append(float('inf'))
-                    
-                    avg_lead_time_s = float(np.mean([t for t in lead_times if t != float('inf')])) if lead_times and any(t != float('inf') for t in lead_times) else 0.0
-                    
-                    # FIXED: Compute oscillation_rate, resolution_fail_rate, and los_failure_rate from trajectory using HallucinationDetector
-                    # These metrics are NOT in the CSV columns - they must be computed from the trajectory
-                    oscillation_rate = 0.0
-                    resolution_fail_rate = 0.0
-                    los_failure_rate = 0.0
-                    
-                    try:
-                        # Load trajectory JSON from same directory
-                        csv_dir = os.path.dirname(csv_path)
-                        csv_base = os.path.basename(csv_path).replace('traj_', 'trajectory_').replace('.csv', '.json')
-                        json_path = os.path.join(csv_dir, csv_base)
-                        
-                        if os.path.exists(json_path):
-                            fallback_metrics = _compute_metrics_from_trajectory_json(json_path, sep_nm=5.0)
-                            
-                            # Extract resolution_fail_rate, los_failure_rate, and oscillation_rate from detector (preserve NaN)
-                            res_val = fallback_metrics.get("resolution_fail_rate", 0.0)
-                            resolution_fail_rate = float(res_val) if not (isinstance(res_val, float) and np.isnan(res_val)) else float('nan')
-                            
-                            los_val = fallback_metrics.get("los_failure_rate", 0.0)
-                            los_failure_rate = float(los_val) if not (isinstance(los_val, float) and np.isnan(los_val)) else float('nan')
-                            
-                            osc_val = fallback_metrics.get("oscillation_rate", 0.0)
-                            oscillation_rate = float(osc_val) if not (isinstance(osc_val, float) and np.isnan(osc_val)) else float('nan')
-                    except Exception as e:
-                        LOGGER.warning(f"Could not compute oscillation/resolution/los metrics from trajectory: {e}")
-                        # Keep defaults of 0.0
-                    
-                    # Extra path metrics - calculate deviation from direct start->waypoint paths
-                    # FIXED: Stop at waypoint_reached = 1
+                    # Extra path metrics calculation (route-based, not in detector)
                     total_extra_path_nm = 0.0
                     avg_extra_path_nm = 0.0
                     avg_extra_path_ratio = 0.0
+                    total_path_length_nm = 0.0
                     
                     try:
                         # Calculate path lengths from trajectory data in CSV
                         agent_ids = df['agent_id'].unique()
                         agent_extra_paths = []
+                        agent_path_lengths = {}
                         
                         for aid in agent_ids:
                             agent_data = df[df['agent_id'] == aid].sort_values('step_idx')
                             if len(agent_data) < 2:
                                 continue
                             
-                            # FIXED: Truncate trajectory at waypoint_reached = 1
+                            # Truncate trajectory at waypoint_reached = 1
                             if 'waypoint_reached' in agent_data.columns:
                                 reached_mask = agent_data['waypoint_reached'] == 1
                                 if reached_mask.any():
-                                    # Stop at first waypoint reached step (inclusive)
                                     waypoint_idx = agent_data[reached_mask].index[0]
                                     agent_data = agent_data.loc[:waypoint_idx]
                             
@@ -1460,21 +1646,18 @@ def run_intrashift_grid(repo_root: str,
                                 dist_nm = R_nm * c
                                 actual_path_nm += dist_nm
                             
-                            # FIXED: Use waypoint coordinates or reached position, not arbitrary end
-                            # Priority 1: Use wp_lat/wp_lon from CSV
-                            # Priority 2: Use position at end of truncated trajectory (where waypoint reached)
+                            agent_path_lengths[aid] = actual_path_nm
+                            
+                            # Calculate direct distance to intended waypoint
                             start_pos = positions[0]
                             
                             if 'wp_lat' in agent_data.columns and 'wp_lon' in agent_data.columns:
                                 wp_lat, wp_lon = agent_data.iloc[0]['wp_lat'], agent_data.iloc[0]['wp_lon']
                                 if not (pd.isna(wp_lat) or pd.isna(wp_lon)):
-                                    # Use scenario waypoint
                                     end_pos = (wp_lat, wp_lon)
                                 else:
-                                    # Waypoint columns exist but NaN
                                     end_pos = positions[-1]
                             else:
-                                # No waypoint columns - use end of truncated trajectory
                                 end_pos = positions[-1]
                             
                             dlat = np.radians(end_pos[0] - start_pos[0])
@@ -1492,100 +1675,18 @@ def run_intrashift_grid(repo_root: str,
                         if agent_extra_paths:
                             total_extra_path_nm = float(sum(x[0] for x in agent_extra_paths))
                             avg_extra_path_nm = float(np.mean([x[0] for x in agent_extra_paths]))
-                            # Calculate ratio as (extra / direct), average across agents
                             ratios = [x[0] / x[2] if x[2] > 0.1 else 0.0 for x in agent_extra_paths]
                             avg_extra_path_ratio = float(np.mean(ratios)) if ratios else 0.0
+                        
+                        total_path_length_nm = sum(agent_path_lengths.values())
                     except Exception as e:
-                        # Fallback if path calculation fails - but log the error for debugging
                         LOGGER.debug(f"Extra path calculation failed: {e}")
                         total_extra_path_nm = avg_extra_path_nm = avg_extra_path_ratio = 0.0
-                    
-                    # Intervention metrics - count alert windows/runs
-                    try:
-                        # Find alert runs (consecutive alert periods)
-                        alert_runs = []
-                        in_run = False
-                        run_start = None
-                        
-                        for i, is_alert in enumerate(alert_flags):
-                            if is_alert and not in_run:
-                                # Start of new alert run
-                                in_run = True
-                                run_start = i
-                            elif not is_alert and in_run:
-                                # End of alert run
-                                in_run = False
-                                alert_runs.append((run_start, i-1))
-                        
-                        # Handle case where alert run continues to end
-                        if in_run:
-                            alert_runs.append((run_start, len(alert_flags)-1))
-                        
-                        num_interventions = len(alert_runs)
-                        
-                        # For matched/false interventions, we'd need IoU matching with ground truth runs
-                        # For simplicity, use a basic heuristic: interventions that overlap with gt_conflict
-                        num_interventions_matched = 0
-                        for start, end in alert_runs:
-                            # Check if this alert run overlaps with any ground truth conflict
-                            gt_overlap = any(gt_flags[i] for i in range(start, end+1))
-                            if gt_overlap:
-                                num_interventions_matched += 1
-                        
-                        num_interventions_false = num_interventions - num_interventions_matched
-                        
-                    except Exception:
-                        # Fallback if intervention calculation fails
-                        num_interventions = num_interventions_matched = num_interventions_false = 0
-                    
-                    # Calculate additional missing columns from available data
-                    # Flight time: total episode duration
-                    flight_time_s = episode_time_s
-                    
-                    # Number of LoS events: count conflicts
-                    num_los_events = int(step_collapsed['conflict_flag'].sum())
-                    
-                    # Total LoS duration: duration of conflicts (10s per step)
-                    total_los_duration = float(num_los_events * 10.0)
-                    
-                    # Calculate path metrics from trajectory data
-                    try:
-                        # Calculate path length from position changes
-                        path_lengths = []
-                        for csv_agent_id in df['agent_id'].unique():
-                            agent_data = df[df['agent_id'] == csv_agent_id].sort_values('step_idx')
-                            if len(agent_data) > 1:
-                                # Calculate distance between consecutive positions
-                                lats = agent_data['lat_deg'].values
-                                lons = agent_data['lon_deg'].values
-                                total_dist = 0.0
-                                for i in range(1, len(lats)):
-                                    # Simple distance calculation (not exact but reasonable approximation)
-                                    dlat = lats[i] - lats[i-1]
-                                    dlon = lons[i] - lons[i-1]
-                                    dist_deg = np.sqrt(dlat**2 + dlon**2)
-                                    dist_nm = dist_deg * 60.0  # Rough conversion to nautical miles
-                                    total_dist += dist_nm
-                                path_lengths.append(total_dist)
-                        
-                        total_path_length_nm = float(np.mean(path_lengths)) if path_lengths else 0.0
-                        
-                        # Path efficiency: straight-line distance / actual path length
-                        if total_path_length_nm > 0:
-                            # Estimate straight-line distance (rough approximation)
-                            straight_line_dist = 50.0  # Rough estimate for parallel scenario
-                            path_efficiency = min(1.0, straight_line_dist / total_path_length_nm)
-                        else:
-                            path_efficiency = 1.0
-                            
-                    except Exception:
                         total_path_length_nm = 0.0
-                        path_efficiency = 1.0
                     
-                    # FIXED: Waypoint reached ratio: ratio of agents that reached their waypoints
+                    # Waypoint reached ratio (simple CSV calculation)
                     try:
                         if 'waypoint_reached' in df.columns:
-                            # Get unique agents and check max waypoint_reached for each
                             agents = df['agent_id'].unique()
                             agents_reached = 0
                             
@@ -1601,7 +1702,7 @@ def run_intrashift_grid(repo_root: str,
                     except Exception:
                         waypoint_reached_ratio = 0.0
                     
-                    # NEW: Total reward calculation
+                    # Reward total (simple CSV sum)
                     try:
                         if 'reward' in df.columns:
                             reward_total = float(df['reward'].sum())
@@ -1610,33 +1711,26 @@ def run_intrashift_grid(repo_root: str,
                     except Exception:
                         reward_total = 0.0
                     
+                    # Build metrics summary (all detector-sourced except extra_path and waypoint_reached)
                     cm_summary = {
-                        "tp": tp_sum,
-                        "fp": fp_sum,
-                        "fn": fn_sum,
-                        "tn": tn_sum,
-                        "min_separation_nm": float(step_collapsed['min_separation_nm'].min()) if not step_collapsed.empty else 200.0,
-                        "num_conflict_steps": int(step_collapsed['conflict_flag'].sum()),
-                        
-                        # Previously missing columns - now calculated
+                        "tp": tp,
+                        "fp": fp,
+                        "fn": fn,
+                        "tn": tn,
+                        "min_separation_nm": min_separation_nm,
+                        "num_conflict_steps": num_conflict_steps,
                         "flight_time_s": flight_time_s,
                         "num_los_events": num_los_events,
                         "total_los_duration": total_los_duration,
                         "total_path_length_nm": total_path_length_nm,
                         "path_efficiency": path_efficiency,
                         "waypoint_reached_ratio": waypoint_reached_ratio,
-                        
-                        # NEW: Extra path metrics (deviation from direct paths)
                         "total_extra_path_nm": total_extra_path_nm,
                         "avg_extra_path_nm": avg_extra_path_nm,
                         "avg_extra_path_ratio": avg_extra_path_ratio,
-                        
-                        # NEW: Intervention count metrics
                         "num_interventions": num_interventions,
                         "num_interventions_matched": num_interventions_matched,
                         "num_interventions_false": num_interventions_false,
-                        
-                        # High-value metrics
                         "precision": precision,
                         "recall": recall,
                         "f1_score": f1_score,
@@ -1644,14 +1738,12 @@ def run_intrashift_grid(repo_root: str,
                         "alerts_per_min": alerts_per_min,
                         "total_alert_time_s": total_alert_time_s,
                         "avg_lead_time_s": avg_lead_time_s,
-                        
-                        # Legacy metrics (calculated properly)
-                        "ghost_conflict": fp_sum / max(1, total_steps) if total_steps > 0 else 0.0,  # False alert rate per step
-                        "missed_conflict": fn_sum / max(1, tp_sum + fn_sum) if (tp_sum + fn_sum) > 0 else 0.0,  # Missed conflict rate
-                        "resolution_fail_rate": resolution_fail_rate,  # Computed from trajectory JSON
-                        "los_failure_rate": los_failure_rate,  # NEW: Computed from trajectory JSON
-                        "oscillation_rate": oscillation_rate,  # Computed from trajectory JSON
-                        "reward_total": reward_total,  # NEW: Total reward from trajectory
+                        "ghost_conflict": ghost_conflict,
+                        "missed_conflict": missed_conflict,
+                        "resolution_fail_rate": resolution_fail_rate,
+                        "los_failure_rate": los_failure_rate,
+                        "oscillation_rate": oscillation_rate,
+                        "reward_total": reward_total,
                     }
                 except Exception as e:
                     LOGGER.warning(f"Failed to extract metrics from CSV {csv_path}: {e}")
@@ -1793,6 +1885,57 @@ def run_intrashift_grid(repo_root: str,
     main_summary_csv = os.path.join(results_dir, "targeted_shift_test_summary.csv")
     df.to_csv(main_summary_csv, index=False)
     
+    # Create unified episode-level summary (similar to intershift's episode_metrics.csv)
+    # This provides all episode-level details with shift values for analysis
+    unified_episode_csv = os.path.join(results_dir, "episode_metrics.csv")
+    
+    # Add model information to each episode row
+    model_name = os.path.basename(checkpoint_path)
+    # Extract scenario from model name (e.g., PPO_chase_2x2_20251008_015945 -> chase_2x2)
+    import re
+    model_match = re.search(r"PPO_([a-z_0-9]+)_\d{8}", model_name, re.IGNORECASE)
+    model_scenario = model_match.group(1) if model_match else scenario_name
+    
+    # Create unified dataframe with model and shift details
+    unified_df = df.copy()
+    unified_df.insert(0, 'model_name', model_name)
+    unified_df.insert(1, 'model_scenario', model_scenario)
+    unified_df.insert(2, 'base_scenario', scenario_name)
+    
+    # Reorder columns for better readability
+    # Priority columns: model info, shift details, identification, then metrics
+    priority_cols = [
+        'model_name', 'model_scenario', 'base_scenario',
+        'test_id', 'target_agent', 'shift_type', 'shift_value', 'shift_range',
+        'episode_id', 'seed', 'description'
+    ]
+    
+    # Confusion matrix and key metrics
+    key_metric_cols = [
+        'tp', 'fp', 'fn', 'tn', 
+        'precision', 'recall', 'f1_score',
+        'min_separation_nm', 'num_conflict_steps', 'num_los_events',
+        'flight_time_s', 'path_efficiency', 'waypoint_reached_ratio'
+    ]
+    
+    # All other columns
+    other_cols = [col for col in unified_df.columns 
+                  if col not in priority_cols + key_metric_cols]
+    
+    # Reorder
+    final_col_order = priority_cols + key_metric_cols + other_cols
+    # Only include columns that exist
+    final_col_order = [col for col in final_col_order if col in unified_df.columns]
+    unified_df = unified_df[final_col_order]
+    
+    # Save unified episode-level summary
+    unified_df.to_csv(unified_episode_csv, index=False)
+    
+    LOGGER.info(f"Saved unified episode-level summary: {unified_episode_csv}")
+    LOGGER.info(f"  Total episodes: {len(unified_df)}")
+    LOGGER.info(f"  Shift types: {unified_df['shift_type'].nunique()}")
+    LOGGER.info(f"  Shift values tested: {len(unified_df['shift_value'].unique())}")
+    
     # Create detailed analysis summaries
     _create_targeted_analysis(df, analysis_dir, timestamp, representative_agents)
     
@@ -1834,6 +1977,9 @@ def run_intrashift_grid(repo_root: str,
             print(f"Warning: Baseline directory not found for comparison visualizations: {baseline_dir}")
     
     LOGGER.info(f"Wrote comprehensive targeted shift analysis to: {results_dir}")
+    LOGGER.info(f"Main outputs:")
+    LOGGER.info(f"  - Episode-level metrics: {os.path.basename(unified_episode_csv)}")
+    LOGGER.info(f"  - Aggregated summary: {os.path.basename(main_summary_csv)}")
     LOGGER.info(f"Total configurations tested: {len(targeted_shifts)}")
     LOGGER.info(f"Total episodes run: {len(summary_rows)}")
     LOGGER.info(f"Skipped {skipped_count}/{total_shifts_attempted} episodes due to t=0 separation violations (<5.0 NM)")
@@ -1901,6 +2047,12 @@ Examples:
         choices=["PPO", "SAC"],
         default="PPO",
         help="RL algorithm used for training. Default: PPO"
+    )
+    
+    parser.add_argument(
+        "--stochastic",
+        action="store_true",
+        help="Use stochastic policy evaluation (explore=True). Default is deterministic (explore=False) for reproducible results."
     )
     
     parser.add_argument(
@@ -2179,7 +2331,8 @@ if __name__ == "__main__":
                     episodes_per_shift=args.episodes,
                     seeds=seeds,
                     generate_viz=args.viz,
-                    outdir=args.outdir
+                    outdir=args.outdir,
+                    explore=args.stochastic
                 )
                 print(f"[{scn}] summary -> {out_csv}")
         else:
@@ -2191,7 +2344,8 @@ if __name__ == "__main__":
                 episodes_per_shift=args.episodes,
                 seeds=seeds,
                 generate_viz=args.viz,
-                outdir=args.outdir
+                outdir=args.outdir,
+                explore=args.stochastic
             )
         
         print("=" * 80)

@@ -203,8 +203,12 @@ class ATCController:
     def run_shift_testing(self, checkpoint_path: Optional[str] = None, scenario_name: str = "parallel", 
                          episodes: int = 3, targeted: bool = True, generate_viz: bool = False,
                          algo: str = "PPO", seeds: Optional[List[int]] = None, 
-                         outdir: Optional[str] = None) -> Optional[str]:
-        """Run distribution shift testing (unison or targeted)."""
+                         outdir: Optional[str] = None, stochastic: bool = False) -> Optional[str]:
+        """Run distribution shift testing (unison or targeted).
+        
+        Args:
+            stochastic: If True, use stochastic policy (explore=True). If False, deterministic (explore=False).
+        """
         try:
             # Clean up any existing Ray processes first
             try:
@@ -221,6 +225,22 @@ class ATCController:
                     logger.error("No checkpoint found. Please train a model first.")
                     return None
             
+            # Auto-detect scenario from checkpoint if not explicitly provided or if default
+            detected_scenario = self._extract_scenario_from_checkpoint(checkpoint_path)
+            if detected_scenario:
+                if scenario_name == "cross_2x2":  # Default value
+                    logger.info(f"Auto-detected scenario from checkpoint: {detected_scenario}")
+                    scenario_name = detected_scenario
+                elif scenario_name != detected_scenario:
+                    logger.warning(f"Checkpoint trained on '{detected_scenario}' but testing on '{scenario_name}'")
+            
+            # Verify scenario exists
+            scenario_path = self.scenarios_dir / f"{scenario_name}.json"
+            if not scenario_path.exists():
+                logger.error(f"Scenario file not found: {scenario_path}")
+                logger.info(f"Available scenarios: {', '.join([f.stem for f in self.scenarios_dir.glob('*.json')])}")
+                return None
+            
             if targeted:
                 from src.testing.intrashift_tester import run_intrashift_grid
                 from ray.rllib.algorithms.ppo import PPO
@@ -228,9 +248,9 @@ class ATCController:
                 
                 algo_class = SAC if algo.upper() == "SAC" else PPO
                 
-                logger.info(f"Running targeted shift testing with {episodes} episodes per shift")
+                logger.info(f"Running targeted shift testing with {episodes} episodes per shift on scenario: {scenario_name}")
                 
-                result_path = run_targeted_shift_grid(
+                result_path = run_intrashift_grid(
                     repo_root=str(self.repo_root),
                     algo_class=algo_class,
                     checkpoint_path=checkpoint_path,
@@ -238,7 +258,8 @@ class ATCController:
                     episodes_per_shift=episodes,
                     seeds=seeds,
                     generate_viz=generate_viz,
-                    outdir=outdir
+                    outdir=outdir,
+                    explore=stochastic
                 )
                 
                 logger.info(f"Intrashift testing completed: {result_path}")
@@ -359,10 +380,144 @@ class ATCController:
             logger.error(f"Visualization failed: {e}")
             return []
     
+    def run_batch_intrashift_testing(self, models_dir: str, scenarios_dir: str = "scenarios",
+                                     episodes: int = 3, generate_viz: bool = False,
+                                     seeds: Optional[List[int]] = None, outdir: Optional[str] = None,
+                                     use_gpu: bool = False, verbose: bool = False,
+                                     stochastic: bool = False) -> Optional[str]:
+        """Run intrashift testing on all models in a directory.
+        
+        Args:
+            models_dir: Directory containing model checkpoints
+            scenarios_dir: Directory containing scenario files
+            episodes: Episodes per shift configuration
+            generate_viz: Generate visualizations
+            seeds: List of random seeds
+            outdir: Custom output directory
+            use_gpu: Enable GPU acceleration
+            verbose: Enable verbose error output
+            stochastic: If True, use stochastic policy (explore=True). If False, deterministic (explore=False).
+        
+        Returns:
+            Path to combined summary CSV
+        """
+        try:
+            from pathlib import Path
+            import pandas as pd
+            from datetime import datetime
+            
+            models_path = self.repo_root / models_dir
+            scenarios_path = self.repo_root / scenarios_dir
+            
+            # Auto-discover models
+            models_to_test = {}
+            for model_dir in models_path.iterdir():
+                if model_dir.is_dir() and model_dir.name.startswith(('PPO_', 'SAC_')):
+                    # Extract scenario and algo from model name
+                    scenario = self._extract_scenario_from_checkpoint(str(model_dir))
+                    if scenario:
+                        algo = model_dir.name.split('_')[0]  # PPO or SAC
+                        models_to_test[model_dir.name] = {
+                            "path": str(model_dir),
+                            "scenario": scenario,
+                            "algo": algo
+                        }
+            
+            if not models_to_test:
+                logger.error(f"No models found in {models_path}")
+                return None
+            
+            logger.info(f"🔬 Running batch intrashift testing on {len(models_to_test)} models...")
+            logger.info(f"Models: {', '.join(models_to_test.keys())}")
+            
+            # Create base output directory
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            if outdir:
+                base_outdir = self.repo_root / outdir
+            else:
+                base_outdir = self.repo_root / f"results_intrashift_batch_{timestamp}"
+            
+            base_outdir.mkdir(exist_ok=True)
+            
+            all_results = []
+            success_count = 0
+            
+            for model_name, model_info in models_to_test.items():
+                logger.info(f"\n{'='*80}")
+                logger.info(f"Testing model: {model_name}")
+                logger.info(f"  Scenario: {model_info['scenario']}")
+                logger.info(f"  Algorithm: {model_info['algo']}")
+                logger.info(f"{'='*80}")
+                
+                try:
+                    # Run intrashift testing for this model
+                    model_outdir = f"{base_outdir.name}/{model_name}"
+                    
+                    result_path = self.run_shift_testing(
+                        checkpoint_path=model_info["path"],
+                        scenario_name=model_info["scenario"],
+                        episodes=episodes,
+                        targeted=True,  # Always use intrashift
+                        generate_viz=generate_viz,
+                        algo=model_info["algo"],
+                        seeds=seeds,
+                        outdir=model_outdir,
+                        stochastic=stochastic
+                    )
+                    
+                    if result_path:
+                        # Load summary CSV if it exists
+                        result_dir = Path(result_path)
+                        summary_csv = result_dir / "baseline_vs_shift_detailed_summary.csv"
+                        
+                        if summary_csv.exists():
+                            df = pd.read_csv(summary_csv)
+                            df["model_name"] = model_name
+                            df["training_scenario"] = model_info["scenario"]
+                            df["algorithm"] = model_info["algo"]
+                            all_results.append(df)
+                            success_count += 1
+                            logger.info(f"✅ Completed testing for {model_name}")
+                        else:
+                            logger.warning(f"Summary CSV not found for {model_name}")
+                    else:
+                        logger.error(f"Failed to test model {model_name}")
+                        
+                except Exception as e:
+                    logger.error(f"Error testing model {model_name}: {e}")
+                    if verbose:
+                        import traceback
+                        traceback.print_exc()
+                    continue
+            
+            # Combine all results
+            if all_results:
+                combined_df = pd.concat(all_results, ignore_index=True)
+                summary_path = base_outdir / "intrashift_batch_summary.csv"
+                combined_df.to_csv(summary_path, index=False)
+                
+                logger.info(f"\n{'='*80}")
+                logger.info(f"✅ Batch intrashift testing completed!")
+                logger.info(f"📊 Successfully tested {success_count}/{len(models_to_test)} models")
+                logger.info(f"📁 Results saved to: {summary_path}")
+                logger.info(f"{'='*80}")
+                
+                return str(summary_path)
+            else:
+                logger.error("No successful test results to summarize")
+                return None
+                
+        except Exception as e:
+            logger.error(f"Batch intrashift testing failed: {e}")
+            if verbose:
+                import traceback
+                traceback.print_exc()
+            return None
+    
     def run_intershift_matrix(self, models_index: Optional[str] = None, models_dir: str = "models",
                              episodes: int = 5, outdir: str = "results_intershift",
                              use_gpu: bool = False, extensive: bool = False,
-                             scenarios_dir: str = "scenarios") -> Optional[str]:
+                             scenarios_dir: str = "scenarios", stochastic: bool = False) -> Optional[str]:
         """Run intershift matrix analysis comparing trained models against scenario shifts."""
         try:
             # Import the intershift_matrix module
@@ -385,6 +540,9 @@ class ATCController:
             
             if extensive:
                 matrix_args.append("--extensive")
+            
+            if stochastic:
+                matrix_args.append("--stochastic")
             
             # Save current sys.argv and replace with our arguments
             original_argv = sys.argv
@@ -553,6 +711,60 @@ class ATCController:
         """Auto-detect the most recent checkpoint."""
         checkpoints = self.list_checkpoints()
         return checkpoints[0]["path"] if checkpoints else None
+    
+    def _extract_scenario_from_checkpoint(self, checkpoint_path: str) -> Optional[str]:
+        """Extract scenario name from checkpoint path.
+        
+        Args:
+            checkpoint_path: Path to checkpoint (e.g., 'models/PPO_cross_2x2_20251008_050349')
+        
+        Returns:
+            Scenario name (e.g., 'cross_2x2') or None if not found
+        """
+        try:
+            # Get the directory name from path
+            checkpoint_name = Path(checkpoint_path).name
+            
+            # Model names follow pattern: ALGO_scenario_timestamp
+            # e.g., PPO_cross_2x2_20251008_050349
+            parts = checkpoint_name.split('_')
+            
+            if len(parts) >= 3:
+                # Extract scenario part (between algo and timestamp)
+                # For multi-part scenarios like cross_2x2, merge_3p1, etc.
+                algo = parts[0]  # PPO, SAC, etc.
+                
+                # Find timestamp (8-digit number)
+                timestamp_idx = None
+                for i, part in enumerate(parts):
+                    if part.isdigit() and len(part) == 8:
+                        timestamp_idx = i
+                        break
+                
+                if timestamp_idx and timestamp_idx > 1:
+                    # Scenario is everything between algo and timestamp
+                    scenario_parts = parts[1:timestamp_idx]
+                    scenario_name = '_'.join(scenario_parts)
+                    
+                    # Verify scenario exists
+                    scenario_path = self.scenarios_dir / f"{scenario_name}.json"
+                    if scenario_path.exists():
+                        return scenario_name
+            
+            # Fallback: check for known scenario patterns
+            known_scenarios = ['cross_2x2', 'cross_3p1', 'cross_4all',
+                             'merge_2x2', 'merge_3p1', 'merge_4all',
+                             'chase_2x2', 'chase_3p1', 'chase_4all']
+            
+            for scenario in known_scenarios:
+                if scenario in checkpoint_name:
+                    return scenario
+            
+            return None
+            
+        except Exception as e:
+            logger.warning(f"Failed to extract scenario from checkpoint path: {e}")
+            return None
     
     def _analyze_trajectory(self, traj_path: Path) -> Dict[str, Any]:
         """Analyze a single trajectory file."""
@@ -755,21 +967,29 @@ def main():
     # Shift testing
     test_parser = subparsers.add_parser("test-shifts", help="Run distribution shift testing")
     test_parser.add_argument("--checkpoint", type=str,
-                            help="Checkpoint path (default: auto-detect latest)")
-    test_parser.add_argument("--scenario", "-s", type=str, default="parallel",
-                            help="Scenario for testing")
+                            help="Checkpoint path for single model testing (mutually exclusive with --models-dir)")
+    test_parser.add_argument("--scenario", "-s", type=str, default="cross_2x2",
+                            help="Scenario for single model testing (default: auto-detect from checkpoint)")
+    test_parser.add_argument("--models-dir", type=str,
+                            help="Directory containing model checkpoints for batch testing (default: test latest checkpoint only)")
+    test_parser.add_argument("--scenarios-dir", type=str, default="scenarios",
+                            help="Directory containing scenario files (default: scenarios)")
     test_parser.add_argument("--episodes", "-e", type=int, default=3,
                             help="Episodes per shift configuration")
     test_parser.add_argument("--intrashift", action="store_true", default=True,
                             help="Use intrashift testing (vs unison). Default: True")
     test_parser.add_argument("--algo", "-a", choices=["PPO", "SAC"], default="PPO",
-                            help="Algorithm type")
+                            help="Algorithm type (for single model testing)")
+    test_parser.add_argument("--use-gpu", action="store_true",
+                            help="Enable GPU acceleration for faster testing")
     test_parser.add_argument("--viz", action="store_true",
                             help="Generate visualizations")
     test_parser.add_argument("--seeds", type=str,
                             help="Comma-separated list of seeds for reproducible episodes (e.g., 42,123,456)")
     test_parser.add_argument("--outdir", type=str,
                             help="Custom output directory name (default: timestamped)")
+    test_parser.add_argument("--stochastic", action="store_true",
+                            help="Use stochastic policy evaluation (explore=True). Default is deterministic (explore=False).")
     
     # Analysis
     analyze_parser = subparsers.add_parser("analyze", help="Analyze results")
@@ -823,6 +1043,8 @@ def main():
                               help="Run extensive testing with 10+ episodes and enhanced analysis")
     matrix_parser.add_argument("--scenarios-dir", type=str, default="scenarios",
                               help="Directory containing scenario files (default: scenarios)")
+    matrix_parser.add_argument("--stochastic", action="store_true",
+                              help="Use stochastic policy evaluation (explore=True). Default is deterministic (explore=False).")
     
     # List commands
     list_parser = subparsers.add_parser("list", help="List available resources")
@@ -899,21 +1121,48 @@ def main():
                     print("Use comma-separated integers, e.g., --seeds 42,123,456")
                     sys.exit(1)
             
-            result = controller.run_shift_testing(
-                checkpoint_path=args.checkpoint,
-                scenario_name=args.scenario,
-                episodes=args.episodes,
-                targeted=args.intrashift,
-                generate_viz=args.viz,
-                algo=args.algo,
-                seeds=seeds,
-                outdir=args.outdir
-            )
-            if result:
-                print(f"Shift testing completed: {result}")
+            # Check if batch processing (--models-dir) or single model (--checkpoint)
+            if args.models_dir:
+                # Batch processing mode
+                logger.info("🔬 Running batch intrashift testing mode...")
+                result = controller.run_batch_intrashift_testing(
+                    models_dir=args.models_dir,
+                    scenarios_dir=args.scenarios_dir,
+                    episodes=args.episodes,
+                    generate_viz=args.viz,
+                    seeds=seeds,
+                    outdir=args.outdir,
+                    use_gpu=args.use_gpu,
+                    verbose=args.verbose,
+                    stochastic=args.stochastic
+                )
+                if result:
+                    print(f"\n✅ Batch shift testing completed: {result}")
+                    print("\n📊 Generated comprehensive intrashift analysis for all models.")
+                    print("📁 Check the output directory for:")
+                    print("  • intrashift_batch_summary.csv (Combined results)")
+                    print("  • Individual model subdirectories with detailed analysis")
+                else:
+                    print("Batch shift testing failed.")
+                    sys.exit(1)
             else:
-                print("Shift testing failed.")
-                sys.exit(1)
+                # Single model mode
+                result = controller.run_shift_testing(
+                    checkpoint_path=args.checkpoint,
+                    scenario_name=args.scenario,
+                    episodes=args.episodes,
+                    targeted=args.intrashift,
+                    generate_viz=args.viz,
+                    algo=args.algo,
+                    seeds=seeds,
+                    outdir=args.outdir,
+                    stochastic=args.stochastic
+                )
+                if result:
+                    print(f"Shift testing completed: {result}")
+                else:
+                    print("Shift testing failed.")
+                    sys.exit(1)
         
         elif args.command == "analyze":
             results = controller.analyze_results(
@@ -945,7 +1194,8 @@ def main():
                 outdir=args.outdir,
                 use_gpu=args.use_gpu,
                 extensive=args.extensive,
-                scenarios_dir=args.scenarios_dir
+                scenarios_dir=args.scenarios_dir,
+                stochastic=args.stochastic
             )
             if result:
                 print(f"Intershift matrix analysis completed: {result}")

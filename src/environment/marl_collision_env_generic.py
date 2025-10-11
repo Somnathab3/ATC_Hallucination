@@ -1,8 +1,30 @@
 """
 Module Name: marl_collision_env_generic.py
-Description: Generic MARL environment for air traffic collision avoidance with structured
-             scenario generation (merge, chase, cross). Creates balanced conflict scenarios
-             each episode with fixed 4-agent configurations for better generalization.
+Description: 
+    Generic MARL environment for air traffic collision avoidance with structured
+    scenario generation. Generates balanced conflict scenarios each episode across
+    three families (MERGE, CHASE, CROSS) with three patterns each (2x2, 3p1, 4all).
+    
+    Scenario Families:
+        - MERGE: Converging flights to common waypoints (head-on/angled approaches)
+        - CHASE: In-trail conflicts with overtaking/same-heading geometry
+        - CROSS: Perpendicular/angular crossings (90-135° conflict angles)
+    
+    Patterns:
+        - 2x2: Two pairs of agents (e.g., A1+A2 vs A3+A4)
+        - 3p1: Three-agent cluster + one singleton (e.g., A1+A2+A3 vs A4)
+        - 4all: All four agents in symmetric conflict (e.g., four-way crossing)
+    
+    All scenarios use consistent parameters:
+        - 4 agents per episode
+        - 250 kt TAS baseline
+        - 10,000 ft altitude
+        - 5 NM well-clear separation standard
+        - Unified reward system with team PBRS
+    
+    Enables cross-scenario generalization by training on procedurally generated
+    conflict geometries rather than frozen scenarios.
+
 Author: Som
 Date: 2025-10-04 (Updated: 2025-10-08)
 """
@@ -55,22 +77,51 @@ def _clean_bs():
 
 class MARLCollisionEnvGeneric(ParallelEnv):
     """
-    Generic MARL Environment for Air Traffic Collision Avoidance.
+    Generic MARL Environment for Air Traffic Collision Avoidance with Structured Scenarios.
     
-    Generates structured conflict scenarios (MERGE, CHASE, CROSS) with fixed 4-agent
-    configurations each episode. Scenarios resemble the existing scenario suite:
-    - MERGE: Aircraft converge to common waypoints (2x2 or 3+1 patterns)
-    - CHASE: In-trail conflicts with same heading (2x2 or 3+1 patterns)  
-    - CROSS: Perpendicular/angular crossings (2x2 or 3+1 patterns)
+    Generates conflict scenarios each episode from three families:
+        - MERGE: Converging flights (head-on, angled) to common waypoints
+            * 2x2: Two pairs approach from opposite sides (mirrored head-on)
+            * 3p1: Three agents converge + one singleton (asymmetric conflict)
+            * 4all: Four agents symmetrically converge (four-way merge)
+        
+        - CHASE: In-trail conflicts (overtaking, same heading)
+            * 2x2: Two pairs in-trail with speed differences
+            * 3p1: Three agents in-trail + one crossing
+            * 4all: Four agents in chain with cascading conflicts
+        
+        - CROSS: Perpendicular/angular crossings
+            * 2x2: Two pairs crossing at 90° (canonical crossing)
+            * 3p1: Three agents crossing + one perpendicular
+            * 4all: Four-way intersection (all agents cross center)
     
-    All scenarios use consistent parameters (4 agents, 250 kt, 10000 ft) to enable
-    cross-scenario generalization and balanced training across conflict types.
-    Uses same unified reward system as frozen scenario environment with team-based
-    PBRS and comprehensive trajectory logging.
+    Scenario Generation Algorithm:
+        1. Select scenario family (MERGE/CHASE/CROSS) and pattern (2x2/3p1/4all)
+        2. Generate initial positions with minimum separation (15-25 NM typical)
+        3. Assign waypoints to create desired conflict geometry
+        4. Validate: Ensure start separation ≥10 NM, conflict zone <5 NM
+        5. Randomize: Rotate entire scenario, perturb speeds (±25 kt)
+    
+    Uses unified reward system (9 components) with team PBRS:
+        - Progress, drift, violation (entry + step), action cost, time, reach, terminal, team
+        - Same reward structure as marl_collision_env_minimal for consistency
+    
+    Fixed Configuration:
+        - 4 agents per episode (matching existing scenario suite)
+        - 250 kt baseline TAS
+        - 10,000 ft altitude
+        - 5 NM well-clear separation
+        - Comprehensive trajectory logging with hallucination detection support
     
     Args:
-        env_config (dict): Configuration including max_aircraft (fixed at 4), 
-                          scenario_complexity (unused), conflict generation parameters.
+        env_config: Configuration dict with:
+            - conflict_probability: Unused (legacy compatibility)
+            - scenario_complexity: Unused (legacy compatibility)
+            - airspace_size_nm: Spatial extent for scenario generation (default 50 NM)
+            - neighbor_topk: Number of nearest neighbors in observation (default 3)
+            - collision_nm: Hard collision threshold (default 1.0 NM)
+            - team_coordination_weight: PBRS weight λ (default 0.2)
+            - enable_hallucination_detection: Real-time alert analysis (default False)
     """
     
     metadata = {"name": "marl_collision_env_generic", "render_modes": []}
@@ -313,15 +364,41 @@ class MARLCollisionEnvGeneric(ParallelEnv):
     def _generate_merge_scenario(self, agent_ids: List[str], center_lat: float, 
                                 center_lon: float, alt_ft: float, spd_kt: float,
                                 pattern: str) -> List[Dict[str, Any]]:
-        """Generate MERGE scenario where aircraft converge to common waypoint(s).
+        """
+        Generate MERGE scenario where aircraft converge to common waypoint(s).
+        
+        MERGE patterns create head-on or angled approach conflicts:
+            - Agents approach same waypoint from different directions
+            - Conflict occurs in convergence zone (≤5 NM from waypoint)
+            - Tests strategic deconfliction and sequencing decisions
+        
+        Patterns:
+            2x2: Two separate 2→1 merges
+                - Left merge: A1 (SW) + A2 (SE) → left waypoint
+                - Right merge: A3 (NW) + A4 (NE) → right waypoint
+                - Waypoints separated by 15 NM longitudinally
+                - Mirrored geometry for balanced training
+            
+            3p1: Three-agent cluster + singleton
+                - A1, A2, A3 converge to center waypoint from 120° spacing
+                - A4 approaches from perpendicular direction
+                - Creates asymmetric 3-vs-1 conflict
+        
+        Geometry:
+            - Start positions: ~40-50 NM from waypoint (radius)
+            - Approach angles: 30-60° offset from direct path
+            - Headings: Pre-calculated toward waypoints
         
         Args:
-            agent_ids: List of agent IDs (A1-A4)
-            center_lat: Center latitude
-            center_lon: Center longitude
-            alt_ft: Altitude in feet
-            spd_kt: Speed in knots
-            pattern: "2x2" (two separate merges) or "3p1" (3 to center, 1 to side)
+            agent_ids: List of agent IDs (A1-A4).
+            center_lat: Center latitude (deg).
+            center_lon: Center longitude (deg).
+            alt_ft: Altitude (ft, constant 10,000).
+            spd_kt: Speed (kt, baseline 250).
+            pattern: "2x2" or "3p1" configuration.
+        
+        Returns:
+            List of agent config dicts with id, type, lat, lon, hdg_deg, spd_kt, alt_ft, waypoint.
         """
         configs = []
         
@@ -453,15 +530,43 @@ class MARLCollisionEnvGeneric(ParallelEnv):
     def _generate_chase_scenario(self, agent_ids: List[str], center_lat: float,
                                 center_lon: float, alt_ft: float, spd_kt: float,
                                 pattern: str) -> List[Dict[str, Any]]:
-        """Generate CHASE scenario with in-trail conflicts (same heading, different positions).
+        """
+        Generate CHASE scenario with in-trail conflicts (overtaking/same-heading geometry).        CHASE patterns create longitudinal conflicts:
+            - Agents on same heading with different speeds or positions
+            - Trailing aircraft overtakes lead aircraft
+            - Tests speed management and longitudinal separation
+        
+        Patterns:
+            2x2: Two parallel in-trail pairs
+                - Left lane: A1 (lead) + A2 (trail) with 6 NM separation
+                - Right lane: A3 (lead) + A4 (trail) with 6 NM separation
+                - Lanes separated by 8 NM laterally
+                - Mirrored geometry for balanced training
+            
+            3p1: Three-agent chain + singleton
+                - A1, A2, A3 in-trail on centerline (6 NM spacing)
+                - A4 on parallel lane 15 NM offset
+                - Creates asymmetric 3-vs-1 conflict
+        
+        Geometry:
+            - Start positions: In-trail spacing 6-8 NM
+            - Headings: All 0° (North) for same-heading conflicts
+            - Waypoints: Ahead of formation by ~10-15 NM
+        
+        Conflict Mechanism:
+            - Speed variations (±25 kt) during episode create overtaking
+            - Agent policy decisions (speed commands) trigger conflicts
         
         Args:
-            agent_ids: List of agent IDs (A1-A4)
-            center_lat: Center latitude
-            center_lon: Center longitude
-            alt_ft: Altitude in feet
-            spd_kt: Speed in knots
-            pattern: "2x2" (two parallel lanes) or "3p1" (3 in-trail, 1 on side)
+            agent_ids: List of agent IDs (A1-A4).
+            center_lat: Center latitude (deg).
+            center_lon: Center longitude (deg).
+            alt_ft: Altitude (ft, constant 10,000).
+            spd_kt: Speed (kt, baseline 250).
+            pattern: "2x2" or "3p1" configuration.
+        
+        Returns:
+            List of agent config dicts with id, type, lat, lon, hdg_deg, spd_kt, alt_ft, waypoint.
         """
         configs = []
         
@@ -560,15 +665,45 @@ class MARLCollisionEnvGeneric(ParallelEnv):
     def _generate_cross_scenario(self, agent_ids: List[str], center_lat: float,
                                 center_lon: float, alt_ft: float, spd_kt: float,
                                 pattern: str) -> List[Dict[str, Any]]:
-        """Generate CROSS scenario with perpendicular/angular crossing conflicts.
+        """
+        Generate CROSS scenario with perpendicular/angular crossing conflicts.
+        
+        CROSS patterns create lateral conflicts:
+            - Agents approach common intersection point from different directions
+            - Perpendicular or angular crossing geometries (90-135°)
+            - Tests tactical deconfliction and crossing sequencing
+        
+        Patterns:
+            2x2: Two pairs crossing at 90° (canonical crossing)
+                - Pair 1: A1 (West→East) + A2 (East→West)
+                - Pair 2: A3 (South→North) + A4 (North→South)
+                - All pass through center waypoint
+                - Classic 4-way intersection conflict
+            
+            3p1: Three-agent crossing + perpendicular singleton
+                - A1, A2, A3 cross at 120° spacing (triangular)
+                - A4 crosses perpendicular to A1-A2 axis
+                - Creates asymmetric crossing conflict
+        
+        Geometry:
+            - Start positions: ~30-50 NM from intersection center
+            - Crossing angles: 90° (2x2), 120°/90° (3p1)
+            - Waypoints: All agents target center point
+        
+        Conflict Zone:
+            - Intersection region within 5 NM of center
+            - Agents must sequence crossing or deviate laterally
         
         Args:
-            agent_ids: List of agent IDs (A1-A4)
-            center_lat: Center latitude
-            center_lon: Center longitude
-            alt_ft: Altitude in feet
-            spd_kt: Speed in knots
-            pattern: "2x2" (two separate crossings) or "3p1" (3-way intersection + 1 side)
+            agent_ids: List of agent IDs (A1-A4).
+            center_lat: Center latitude (deg).
+            center_lon: Center longitude (deg).
+            alt_ft: Altitude (ft, constant 10,000).
+            spd_kt: Speed (kt, baseline 250).
+            pattern: "2x2" or "3p1" configuration.
+        
+        Returns:
+            List of agent config dicts with id, type, lat, lon, hdg_deg, spd_kt, alt_ft, waypoint.
         """
         configs = []
         

@@ -1,36 +1,76 @@
 #!/usr/bin/env python3
 """
 Module Name: crm_collision_risk.py
-Description: Lateral Collision Risk Model (CRM) analysis for MARL-based ATC systems.
-Author: Som
-Date: 2025-10-08
+Description: 
+    Lateral Collision Risk Model (CRM) analysis for MARL-based ATC systems.
+    Implements ICAO Collision Risk Model for lateral separation violations.
+    
+    Computes lateral collision risk rate N_ay (collisions per flight hour) for
+    5 NM separation standard. Compares baseline vs shift vs generic model performance
+    against Target Level of Safety (TLS) thresholds (2-5×10⁻⁹ per flight hour).
 
-Computes lateral collision risk rate (N_ay) for 5 NM separation using the standard
-CRM formula. Compares baseline vs shift vs generic model performance against TLS
-(Target Level of Safety) thresholds.
-
-CRM Formula (lateral):
+CRM Formula (ICAO Lateral):
     N_ay = P_y(S_y) * P_z(0) * λ_x * [
         E_y(same) * (|ΔV|/(2λ_x) + |ẏ|/(2λ_y) + |ż|/(2λ_z)) +
         E_y(opp)  * (2|ΔV|/(2λ_x) + |ẏ|/(2λ_y) + |ż|/(2λ_z))
     ]
 
-Where:
-    - P_y(S_y): Probability of lateral overlap within S_y NM
-    - P_z(0): Probability of same flight level (1.0 for 2D scenarios)
-    - λ_x, λ_y, λ_z: Aircraft geometric dimensions (length, wingspan, height)
-    - E_y(same/opp): Expected occupancy for same/opposite direction
-    - |ΔV|: Relative along-track speed
-    - |ẏ|: Lateral rate of closure
-    - |ż|: Vertical rate (0 for same FL)
+    Where:
+        P_y(S_y): Probability of lateral overlap within S_y NM separation.
+                  Two-tier estimation:
+                    - Tier A: Episode-level min_separation_nm < 5 NM fraction
+                    - Tier B: Exact pair-time overlap from trajectory analysis
+        
+        P_z(0): Probability of same flight level.
+                Fixed at 1.0 for 2D scenarios (all agents at 10,000 ft).
+        
+        λ_x, λ_y, λ_z: Aircraft geometric dimensions (NM).
+                    - λ_x: Length (37.6 m ≈ 0.0203 NM for A320)
+                    - λ_y: Wingspan (35.8 m ≈ 0.0193 NM for A320)
+                    - λ_z: Height (11.8 m ≈ 0.0064 NM for A320)
+        
+        E_y(same): Expected same-direction occupancy (aircraft-hours).
+                   = flow_same * (S_x / default_speed)
+                   Typical flow_same: 10 ac/h for en-route sectors
+        
+        E_y(opp): Expected opposite-direction occupancy (aircraft-hours).
+                  = flow_opp * (S_x / default_speed)
+                  Typical flow_opp: 5 ac/h for en-route sectors
+        
+        |ΔV|: Relative along-track speed (kt).
+               For same direction: Small differential (0.15 * speed)
+               For opposite direction: Sum of speeds (2.0 * speed)
+        
+        |ẏ|: Lateral rate of closure (kt).
+              = speed * sin(crossing_angle)
+              For parallel tracks: 0 kt
+              For 90° crossing: speed
+        
+        |ż|: Vertical rate (kt).
+              Fixed at 0 for 2D scenarios (same flight level)
 
-Two-tier P_y estimation:
-    - Tier A (fallback): Episode-level min_separation_nm < 5 NM fraction
-    - Tier B (preferred): Exact lateral overlap from trajectory pair-time analysis
+Two-Tier P_y Estimation:
+    Tier A (Fallback): Episode-level analysis
+        - Count episodes where min_separation_nm < 5 NM
+        - P_y = (episodes_with_violation) / (total_episodes)
+        - Conservative upper bound, may overestimate risk
+    
+    Tier B (Preferred): Trajectory pair-time analysis
+        - Compute exact lateral overlap duration for each agent pair
+        - Count timesteps where separation < 5 NM
+        - P_y = (violation_timesteps) / (total_timesteps)
+        - More accurate, captures temporal dynamics
+
+Target Level of Safety (TLS):
+    ICAO standard: 2-5×10⁻⁹ fatal accidents per flight hour.
+    Scenarios exceeding TLS require safety interventions.
 
 Usage:
     python crm_collision_risk.py --data_dir "out2" --output "crm_analysis"
     python crm_collision_risk.py --intershift "out2" --intrashift "results" --output "crm_full"
+
+Author: Som
+Date: 2025-10-08
 """
 
 import os
@@ -70,36 +110,46 @@ plt.rcParams.update({
 # CRM CONSTANTS (A320-like geometry)
 # ============================================================================
 
-# Separation standard
-S_Y_NM = 5.0  # Lateral separation in nautical miles
+# Separation standard (ICAO well-clear)
+S_Y_NM = 5.0  # Lateral separation standard (NM)
 
 # Longitudinal window for occupancy calculation (ICAO standard)
-# Typical value: 60-120 NM depending on sector density
-S_X_NM = 100.0  # Longitudinal window in nautical miles
+# Defines the along-track distance window for traffic flow analysis
+# Typical value: 60-120 NM depending on sector density and traffic patterns
+S_X_NM = 100.0  # Longitudinal window (NM)
 
-# Probability of same flight level (1.0 when conditioning on 2D scenarios)
-PZ_SAME_FL = 1.0
+# Probability of same flight level
+# Fixed at 1.0 when conditioning on 2D scenarios (all agents at 10,000 ft)
+# In 3D scenarios with vertical separation, P_z(0) would be <1.0
+PZ_SAME_FL = 1.0  # Dimensionless probability
 
-# Aircraft geometric dimensions in nautical miles (1 NM = 1852 m)
-# A320 reference: length=37.6m, wingspan=35.8m, height=11.8m
-LAMBDA_X = 37.6 / 1852.0  # length ≈ 0.0203 NM
-LAMBDA_Y = 35.8 / 1852.0  # wingspan ≈ 0.0193 NM
-LAMBDA_Z = 11.8 / 1852.0  # height ≈ 0.0064 NM
+# Aircraft geometric dimensions (NM)
+# A320 reference dimensions converted to nautical miles (1 NM = 1852 m):
+#   - Length: 37.6 m ≈ 0.0203 NM (fuselage length)
+#   - Wingspan: 35.8 m ≈ 0.0193 NM (wingtip to wingtip)
+#   - Height: 11.8 m ≈ 0.0064 NM (tail to ground)
+LAMBDA_X = 37.6 / 1852.0  # Length λ_x ≈ 0.0203 NM
+LAMBDA_Y = 35.8 / 1852.0  # Wingspan λ_y ≈ 0.0193 NM
+LAMBDA_Z = 11.8 / 1852.0  # Height λ_z ≈ 0.0064 NM
 
-# Target Level of Safety (TLS) band
-TLS_MIN = 2.0e-9  # Fatal accidents per flight hour
-TLS_MAX = 5.0e-9
+# Target Level of Safety (TLS) band (ICAO standard)
+# Fatal collision accidents per flight hour acceptable risk threshold
+TLS_MIN = 2.0e-9  # Lower bound (2×10⁻⁹ per flight hour)
+TLS_MAX = 5.0e-9  # Upper bound (5×10⁻⁹ per flight hour)
 
 # Default speed for episodes with zero path (kt = NM/h)
-DEFAULT_SPEED_KT = 250.0
+# Used when trajectory distance is near-zero or undefined
+DEFAULT_SPEED_KT = 250.0  # kt (typical cruise speed for A320)
 
 # Default traffic flow rates (aircraft per hour on adjacent route)
-# Conservative estimates for en-route sectors
-DEFAULT_FLOW_SAME = 10.0  # Same direction traffic (ac/h)
-DEFAULT_FLOW_OPP = 5.0    # Opposite direction traffic (ac/h)
+# Conservative estimates for en-route sectors at cruise altitude
+# Used to compute expected occupancy E_y in CRM formula
+DEFAULT_FLOW_SAME = 10.0  # Same-direction traffic (ac/h)
+DEFAULT_FLOW_OPP = 5.0    # Opposite-direction traffic (ac/h)
 
-# Epsilon for near-zero relative speeds
-SPEED_EPSILON = 1e-3
+# Epsilon for near-zero relative speeds (avoid division by zero)
+# Used in occupancy calculations when relative velocity approaches zero
+SPEED_EPSILON = 1e-3  # kt
 
 
 # ============================================================================
@@ -107,45 +157,92 @@ SPEED_EPSILON = 1e-3
 # ============================================================================
 
 SCENARIO_GEOMETRY = {
-    "head_on": {
-        "flow_same": 0.0,      # No same-direction traffic (ac/h)
-        "flow_opp": 10.0,      # Opposite direction traffic (ac/h)
-        "delta_v_factor": 0.0, # |Δv| for same-dir pairs (not applicable)
-        "ydot_factor": 0.0,    # Lateral closure rate
-        "angle_deg": 180.0,
-        "description": "Head-on encounter"
-    },
-    "parallel": {
+    # CHASE scenarios (in-trail following, same direction)
+    "chase_2x2": {
         "flow_same": 10.0,     # Same-direction traffic (ac/h)
         "flow_opp": 0.0,       # No opposite traffic
-        "delta_v_factor": 0.1, # Small speed difference
+        "delta_v_factor": 0.15, # Small speed difference in trail
+        "ydot_factor": 0.0,    # No lateral closure (parallel tracks)
+        "angle_deg": 0.0,
+        "description": "Chase 2x2: Two pairs in-trail"
+    },
+    "chase_3p1": {
+        "flow_same": 10.0,
+        "flow_opp": 0.0,
+        "delta_v_factor": 0.15,
         "ydot_factor": 0.0,
         "angle_deg": 0.0,
-        "description": "Parallel tracks"
+        "description": "Chase 3+1: Three plus one in-trail"
     },
-    "canonical_crossing": {
+    "chase_4all": {
+        "flow_same": 10.0,
+        "flow_opp": 0.0,
+        "delta_v_factor": 0.15,
+        "ydot_factor": 0.0,
+        "angle_deg": 0.0,
+        "description": "Chase 4all: Four aircraft in-trail"
+    },
+    
+    # CROSS scenarios (perpendicular crossing, 90°)
+    "cross_2x2": {
         "flow_same": 5.0,      # Mixed traffic
         "flow_opp": 5.0,
         "delta_v_factor": 1.0,
-        "ydot_factor": 1.0,    # θ ≈ 90°, |ẏ| ≈ V_avg
+        "ydot_factor": 1.0,    # θ = 90°, |ẏ| ≈ V_avg
         "angle_deg": 90.0,
-        "description": "Perpendicular crossing"
+        "description": "Cross 2x2: Two pairs perpendicular crossing"
     },
-    "converging": {
+    "cross_3p1": {
         "flow_same": 5.0,
         "flow_opp": 5.0,
         "delta_v_factor": 1.0,
-        "ydot_factor": 0.866,  # θ ≈ 60°, |ẏ| ≈ V_avg * sin(60°)
-        "angle_deg": 60.0,
-        "description": "Converging encounter"
+        "ydot_factor": 1.0,
+        "angle_deg": 90.0,
+        "description": "Cross 3+1: Three plus one perpendicular crossing"
     },
-    "t_formation": {
-        "flow_same": 10.0,
-        "flow_opp": 0.0,
+    "cross_4all": {
+        "flow_same": 5.0,
+        "flow_opp": 5.0,
+        "delta_v_factor": 1.0,
+        "ydot_factor": 1.0,
+        "angle_deg": 90.0,
+        "description": "Cross 4all: Four aircraft perpendicular crossing"
+    },
+    
+    # MERGE scenarios (converging merge, ~7.5-15° angles)
+    "merge_2x2": {
+        "flow_same": 8.0,      # Mostly same-direction flow
+        "flow_opp": 2.0,
+        "delta_v_factor": 0.5, # Moderate speed difference
+        "ydot_factor": 0.259,  # θ ≈ 15°, |ẏ| ≈ V_avg * sin(15°)
+        "angle_deg": 15.0,
+        "description": "Merge 2x2: Two pairs converging merge"
+    },
+    "merge_3p1": {
+        "flow_same": 8.0,
+        "flow_opp": 2.0,
+        "delta_v_factor": 0.5,
+        "ydot_factor": 0.259,
+        "angle_deg": 15.0,
+        "description": "Merge 3+1: Three plus one converging merge"
+    },
+    "merge_4all": {
+        "flow_same": 8.0,
+        "flow_opp": 2.0,
+        "delta_v_factor": 0.5,
+        "ydot_factor": 0.259,
+        "angle_deg": 15.0,
+        "description": "Merge 4all: Four aircraft converging merge"
+    },
+    
+    # GENERIC fallback (for unknown scenarios)
+    "generic": {
+        "flow_same": 7.0,
+        "flow_opp": 3.0,
         "delta_v_factor": 0.5,
         "ydot_factor": 0.5,
-        "angle_deg": 45.0,
-        "description": "T-formation encounter"
+        "angle_deg": 30.0,
+        "description": "Generic multi-scenario encounter"
     }
 }
 
@@ -504,7 +601,7 @@ class CRMCollisionRiskAnalyzer:
             v_avg_kt = DEFAULT_SPEED_KT
         
         # Get scenario geometry defaults
-        scenario_geom = SCENARIO_GEOMETRY.get(scenario_name, SCENARIO_GEOMETRY['canonical_crossing'])
+        scenario_geom = SCENARIO_GEOMETRY.get(scenario_name, SCENARIO_GEOMETRY['generic'])
         
         # Flow rates (aircraft per hour)
         flow_same = scenario_geom['flow_same']

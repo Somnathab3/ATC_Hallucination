@@ -1,9 +1,60 @@
 """
 Module Name: intershift_matrix.py
-Description: Intershift matrix analysis framework. Compares trained model performance
-             across different scenarios under nominal and shifted conditions with comprehensive
-             visualization and hallucination detection analysis.
-             (Previously: baseline_vs_shift_matrix.py)
+Description: 
+    Intershift matrix analysis framework for cross-scenario generalization testing.
+    Compares trained model performance across different scenarios to evaluate
+    generalization beyond training distribution.
+    
+    Intershift Testing Methodology:
+        Tests model performance ACROSS different scenario families.
+        Evaluates generalization from training scenario to unseen scenarios.
+        Creates N×M matrix: N models × M test scenarios.
+    
+    Testing Protocol:
+        1. Load multiple model checkpoints (trained on different scenarios)
+        2. Load all available test scenarios
+        3. For each (model, scenario) pair:
+            a. Run baseline episodes (model on its training scenario)
+            b. Run shift episodes (model on different test scenario)
+            c. Compute metrics: LoS rate, collision rate, reach rate, hallucination
+        4. Generate cross-scenario performance heatmaps and degradation analysis
+    
+    Key Metrics:
+        Performance:
+            - LoS rate: Fraction of episodes with separation <5 NM
+            - Collision rate: Fraction with hard collisions <1 NM
+            - Reach rate: Fraction successfully reaching waypoints
+            - Episode length: Timesteps to completion/failure
+        
+        Hallucination (if enabled):
+            - Precision: True alerts / (true + false alerts)
+            - Recall: True alerts / ground truth conflicts
+            - F1 score: Harmonic mean of precision and recall
+        
+        Generalization:
+            - Within-family: Performance on same conflict family (CHASE→CHASE)
+            - Cross-family: Performance on different families (CHASE→MERGE)
+            - Degradation ratio: (baseline - shift) / baseline
+    
+    Output Structure:
+        results/
+            intershift_matrix_{timestamp}/
+                models/
+                    PPO_chase_2x2/
+                    PPO_merge_3p1/
+                    ...
+                scenarios/
+                    chase_2x2_baseline.json
+                    merge_3p1_shift.json
+                    ...
+                matrix_results.csv
+                heatmaps/
+                    los_rate_heatmap.png
+                    reach_rate_heatmap.png
+                    ...
+    
+    (Previously: baseline_vs_shift_matrix.py)
+
 Author: Som
 Date: 2025-10-04
 """
@@ -24,7 +75,7 @@ from ray.rllib.algorithms.algorithm import Algorithm
 
 # --- Reuse your stable env registration (path-healing) ---
 # NOTE: this function exists in your repo already.
-from src.testing.intrashift_tester import make_env   # :contentReference[oaicite:3]{index=3}
+from src.testing.intrashift_tester import make_env   
 from ray.tune.registry import register_env
 from ray.rllib.env.wrappers.pettingzoo_env import ParallelPettingZooEnv
 
@@ -56,17 +107,33 @@ ENV_NAME = "marl_collision_env_v0"
 DEFAULT_SCENARIOS = ["head_on","parallel","t_formation","converging","canonical_crossing"]
 
 def abspath(p): 
-    """Convert path to absolute path."""
+    """
+    Convert path to absolute path.
+    
+    Expands ~ (home directory) and resolves relative paths to absolute.
+    Used for cross-platform path handling.
+    
+    Args:
+        p: Path string or Path object.
+    
+    Returns:
+        Absolute path string.
+    """
     return str(pathlib.Path(p).expanduser().resolve())
 
 def discover_scenarios(scen_dir: str) -> Dict[str,str]:
-    """Discover all JSON scenario files in directory.
+    """
+    Discover all JSON scenario files in directory.
+    
+    Scans directory for *.json files and maps scenario names to paths.
+    Used to automatically detect available test scenarios.
     
     Args:
-        scen_dir: Directory path to search.
-        
+        scen_dir: Directory path to search for scenario JSON files.
+    
     Returns:
-        Dictionary mapping scenario names to absolute file paths.
+        Dictionary mapping scenario stem names to absolute file paths.
+        Example: {"chase_2x2": "/path/scenarios/chase_2x2.json", ...}
     """
     d = {}
     for p in pathlib.Path(scen_dir).glob("*.json"):
@@ -76,6 +143,9 @@ def discover_scenarios(scen_dir: str) -> Dict[str,str]:
 def parse_baseline_scenario_from_ckpt(ckpt_path: str) -> Optional[str]:
     """
     Extract training scenario from checkpoint folder name.
+    
+    Parses checkpoint directory name to infer the scenario used for training.
+    Assumes naming convention: PPO_{scenario}_{timestamp} or similar.
     
     Args:
         ckpt_path: Path to model checkpoint directory.
@@ -169,7 +239,7 @@ def load_algo(ckpt: str, use_gpu: bool = False) -> Tuple[Algorithm, str]:
     """
     init_ray(use_gpu=use_gpu)
     register_env_once()
-    algo = Algorithm.from_checkpoint(abspath(ckpt))  # :contentReference[oaicite:5]{index=5}
+    algo = Algorithm.from_checkpoint(abspath(ckpt))  
     
     # Note: GPU configuration is handled during training, not inference
     # Ray will automatically use available GPUs for workers if available
@@ -201,6 +271,7 @@ def build_env(scenario_json: str, results_dir: str, seed: int = 123, is_generic_
         "enable_hallucination_detection": True,
         "log_trajectories": True,
         "seed": seed,
+        "max_episode_steps": 150,  # Match training configuration
         # IMPORTANT: keep the SAME obs/reward settings as training to avoid space mismatches.
         "neighbor_topk": 3,
         "collision_nm": 3.0,
@@ -208,14 +279,24 @@ def build_env(scenario_json: str, results_dir: str, seed: int = 123, is_generic_
     # make_env already returns ParallelPettingZooEnv(MARLCollisionEnv(cfg)) with path healing
     return make_env(cfg)
 
-def compute_once(algo: Algorithm, policy_id: str, env: ParallelPettingZooEnv):
+def compute_once(algo: Algorithm, policy_id: str, env: ParallelPettingZooEnv, explore: bool = False):
+    """Run one episode with the given policy.
+    
+    Args:
+        algo: RLLib algorithm instance
+        policy_id: Policy identifier to use
+        env: PettingZoo parallel environment
+        explore: If True, use stochastic policy (sample from distribution).
+                 If False, use deterministic policy (take mode/mean action).
+                 Default: False for reproducible deterministic evaluation.
+    """
     obs, _ = env.reset()
     done = False
     while not done:
         actions = {}
         for aid in env.agents:
             if aid in obs:
-                a = algo.compute_single_action(obs[aid], explore=True, policy_id=policy_id)  # :contentReference[oaicite:6]{index=6}
+                a = algo.compute_single_action(obs[aid], explore=explore, policy_id=policy_id)  
                 actions[aid] = np.asarray(a, dtype=np.float32)
             else:
                 actions[aid] = np.array([0.0, 0.0], dtype=np.float32)
@@ -302,70 +383,100 @@ def metrics_from_csv(csv_path: str, sep_nm: float = 5.0) -> Dict[str, float]:
 
 def extract_comprehensive_metrics_from_csv(csv_path: str, sep_nm: float = 5.0) -> Dict[str, float]:
     """
-    Extract comprehensive metrics from trajectory CSV using the same approach as intrashift_tester.
-    This mirrors the exact metric extraction process to ensure consistency.
+    Extract comprehensive metrics from trajectory CSV using HallucinationDetector as authoritative source.
+    
+    CRITICAL: This function now uses HallucinationDetector.compute() for all event-based metrics
+    to ensure consistency with the reference implementation and avoid duration-weighted biases.
+    
+    See: docs/METRICS_CALCULATION_REFERENCE.md for detailed metric definitions
+    See: docs/METRICS_DISCREPANCY_ANALYSIS.md for rationale behind this refactor
     """
     try:
         df = pd.read_csv(csv_path)
         if df.empty:
             return _get_default_metrics()
         
-        # Collapse per-step data for episode-level metrics (like targeted shift tester)
-        step_collapsed = df.groupby('step_idx').agg({
-            'min_separation_nm': 'min',
-            'conflict_flag': 'max' if 'conflict_flag' in df.columns else lambda x: 0,
-            'predicted_alert': 'max' if 'predicted_alert' in df.columns else lambda x: 0,
-            'tp': 'sum' if 'tp' in df.columns else lambda x: 0,
-            'fp': 'sum' if 'fp' in df.columns else lambda x: 0,
-            'fn': 'sum' if 'fn' in df.columns else lambda x: 0,
-            'tn': 'sum' if 'tn' in df.columns else lambda x: 0,
-        }).reset_index()
+        # Build trajectory structure for HallucinationDetector
+        trajectory = _build_trajectory_from_csv(df)
         
-        # Basic confusion matrix metrics
-        tp_sum = int(step_collapsed['tp'].sum()) if 'tp' in step_collapsed.columns else 0
-        fp_sum = int(step_collapsed['fp'].sum()) if 'fp' in step_collapsed.columns else 0
-        fn_sum = int(step_collapsed['fn'].sum()) if 'fn' in step_collapsed.columns else 0
-        tn_sum = int(step_collapsed['tn'].sum()) if 'tn' in step_collapsed.columns else 0
-        total_steps = len(step_collapsed)
+        # Initialize detector with standard parameters (matching environment config)
+        from src.analysis.hallucination_detector_enhanced import HallucinationDetector
+        hd = HallucinationDetector(
+            horizon_s=120.0,
+            action_thresh=(3.0, 5.0),  # 3° heading, 5 kt speed
+            res_window_s=60.0,
+            action_period_s=10.0,
+            los_threshold_nm=5.0,
+            lag_pre_steps=1,
+            lag_post_steps=1,
+            debounce_n=2,
+            debounce_m=3,
+            iou_threshold=0.1
+        )
         
-        # Precision, recall, F1
-        precision = tp_sum / max(1, tp_sum + fp_sum)
-        recall = tp_sum / max(1, tp_sum + fn_sum)
-        f1_score = 2 * precision * recall / max(1e-9, precision + recall)
+        # Compute all metrics from detector (authoritative source)
+        detector_metrics = hd.compute(trajectory, sep_nm=sep_nm, return_series=False)
         
-        # Flight time calculation
-        if 'timestamp' in df.columns:
-            flight_time_s = float(df['timestamp'].max() - df['timestamp'].min())
+        # Extract event-based confusion matrix metrics (event counts, not step sums)
+        tp = detector_metrics.get("tp", 0)
+        fp = detector_metrics.get("fp", 0)
+        fn = detector_metrics.get("fn", 0)
+        tn = detector_metrics.get("tn", 0)  # TN is in timesteps (different unit)
+        
+        # Extract precision, recall, F1 (computed from event counts)
+        precision = detector_metrics.get("precision", 0.0)
+        recall = detector_metrics.get("recall", 0.0)
+        f1_score = detector_metrics.get("f1_score", 0.0)
+        
+        # Extract LoS metrics from detector (authoritative)
+        num_los_events = detector_metrics.get("num_los_events", 0)
+        total_los_duration = detector_metrics.get("total_los_duration", 0.0)
+        min_separation_nm = detector_metrics.get("min_separation_nm", 200.0)
+        num_conflict_steps = detector_metrics.get("num_conflict_steps", 0)
+        
+        # Extract intervention metrics from detector (authoritative)
+        num_interventions = detector_metrics.get("num_interventions", 0)
+        num_interventions_matched = detector_metrics.get("num_interventions_matched", 0)
+        num_interventions_false = detector_metrics.get("num_interventions_false", 0)
+        
+        # Extract ghost/missed conflict rates (authoritative formulas)
+        ghost_conflict = detector_metrics.get("ghost_conflict", 0.0)
+        missed_conflict = detector_metrics.get("missed_conflict", 0.0)
+        
+        # Extract alert metrics from detector
+        alert_duty_cycle = detector_metrics.get("alert_duty_cycle", 0.0)
+        total_alert_time_s = detector_metrics.get("total_alert_time_s", 0.0)
+        avg_lead_time_s = detector_metrics.get("avg_lead_time_s", 0.0)
+        
+        # Extract resolution and oscillation metrics from detector
+        resolution_fail_rate = detector_metrics.get("resolution_fail_rate", 0.0)
+        los_failure_rate = detector_metrics.get("los_failure_rate", 0.0)
+        oscillation_rate = detector_metrics.get("oscillation_rate", 0.0)
+        
+        # Extract path efficiency (time-based definition: min(1.0, 300s/flight_time_s))
+        path_efficiency = detector_metrics.get("path_efficiency", 1.0)
+        flight_time_s = detector_metrics.get("flight_time_s", 0.0)
+        
+        # Compute alerts_per_min (time-normalized)
+        if flight_time_s > 0:
+            alerts_per_min = (total_alert_time_s / max(1.0, flight_time_s / 60.0))
         else:
-            flight_time_s = float(len(df) * 10.0)  # Assume 10s per step
+            alerts_per_min = 0.0
         
-        # Loss of Separation events
-        num_los_events = 0
-        total_los_duration = 0.0
-        if 'min_separation_nm' in df.columns:
-            los_mask = df['min_separation_nm'] < sep_nm
-            if los_mask.any():
-                # Count LOS transitions
-                los_transitions = los_mask.astype(int).diff().fillna(0)
-                num_los_events = int((los_transitions == 1).sum())
-                total_los_duration = float(los_mask.sum() * 10.0)  # 10s per step
-        
-        # Path metrics calculation
+        # Extra path metrics calculation (route-based, not in detector)
         try:
-            # Calculate path lengths per agent (FIXED: stop at waypoint_reached)
+            # Calculate path lengths per agent (stop at waypoint_reached)
             agent_path_lengths = {}
             agent_extra_nm = {}
             agent_extra_ratio = {}
-            agent_efficiencies = []
             
             for agent_id in df['agent_id'].unique():
                 agent_df = df[df['agent_id'] == agent_id].sort_values('step_idx')
                 if len(agent_df) >= 2:
-                    # FIXED: Truncate trajectory at waypoint_reached = 1
+                    # Truncate trajectory at waypoint_reached = 1
                     if 'waypoint_reached' in agent_df.columns:
                         reached_mask = agent_df['waypoint_reached'] == 1
                         if reached_mask.any():
-                            # Stop at first waypoint reached step (inclusive)
                             waypoint_step = agent_df[reached_mask].iloc[0].name
                             agent_df = agent_df.loc[:waypoint_step]
                     
@@ -379,61 +490,45 @@ def extract_comprehensive_metrics_from_csv(csv_path: str, sep_nm: float = 5.0) -
                     
                     agent_path_lengths[agent_id] = path_length
                     
-                    # FIXED: Calculate direct distance to intended waypoint
-                    # Priority 1: Use wp_lat/wp_lon from CSV (scenario-defined waypoint)
-                    # Priority 2: Use position where waypoint_reached = 1
-                    # Priority 3: Use final position in truncated trajectory
+                    # Calculate direct distance to intended waypoint
                     start_lat, start_lon = agent_df.iloc[0]['lat_deg'], agent_df.iloc[0]['lon_deg']
                     
                     if 'wp_lat' in agent_df.columns and 'wp_lon' in agent_df.columns:
                         wp_lat, wp_lon = agent_df.iloc[0]['wp_lat'], agent_df.iloc[0]['wp_lon']
                         if not (pd.isna(wp_lat) or pd.isna(wp_lon)):
-                            # Use scenario waypoint coordinates
                             direct_dist = haversine_nm(start_lat, start_lon, wp_lat, wp_lon)
                         else:
-                            # Waypoint columns exist but NaN - use reached position
                             end_lat, end_lon = agent_df.iloc[-1]['lat_deg'], agent_df.iloc[-1]['lon_deg']
                             direct_dist = haversine_nm(start_lat, start_lon, end_lat, end_lon)
                     else:
-                        # No waypoint columns - use position at end of truncated trajectory
-                        # (this is where waypoint was reached, or final position if not reached)
                         end_lat, end_lon = agent_df.iloc[-1]['lat_deg'], agent_df.iloc[-1]['lon_deg']
                         direct_dist = haversine_nm(start_lat, start_lon, end_lat, end_lon)
                     
-                    # Calculate extra path and efficiency only if agent moved significantly
-                    if direct_dist > 0.1:  # More than 0.1 NM movement
+                    # Calculate extra path only if agent moved significantly
+                    if direct_dist > 0.1:
                         extra_nm = max(0, path_length - direct_dist)
                         agent_extra_nm[agent_id] = extra_nm
                         agent_extra_ratio[agent_id] = extra_nm / direct_dist
-                        # FIXED: Path efficiency = direct / actual (not time-based)
-                        agent_efficiencies.append(direct_dist / path_length if path_length > 0 else 1.0)
                     else:
-                        # Agent didn't move significantly - perfect efficiency
                         agent_extra_nm[agent_id] = 0.0
                         agent_extra_ratio[agent_id] = 0.0
-                        agent_efficiencies.append(1.0)
                 else:
                     agent_path_lengths[agent_id] = 0.0
                     agent_extra_nm[agent_id] = 0.0
                     agent_extra_ratio[agent_id] = 0.0
-                    agent_efficiencies.append(1.0)
             
             total_path_length_nm = sum(agent_path_lengths.values())
             total_extra_path_nm = sum(agent_extra_nm.values())
             avg_extra_path_nm = total_extra_path_nm / max(1, len(agent_extra_nm))
             avg_extra_path_ratio = sum(agent_extra_ratio.values()) / max(1, len(agent_extra_ratio))
             
-            # FIXED: Path efficiency = average of (direct/actual) across agents
-            path_efficiency = float(np.mean(agent_efficiencies)) if agent_efficiencies else 1.0
-            
         except Exception:
             total_path_length_nm = 0.0
             total_extra_path_nm = 0.0
             avg_extra_path_nm = 0.0
             avg_extra_path_ratio = 0.0
-            path_efficiency = 1.0
         
-        # Waypoint reached ratio
+        # Waypoint reached ratio (simple CSV calculation)
         try:
             if 'waypoint_reached' in df.columns:
                 waypoint_reached_ratio = float(df['waypoint_reached'].max())
@@ -442,33 +537,7 @@ def extract_comprehensive_metrics_from_csv(csv_path: str, sep_nm: float = 5.0) -
         except Exception:
             waypoint_reached_ratio = 0.0
         
-        # Alert timing and burden metrics
-        try:
-            if 'predicted_alert' in df.columns:
-                alert_steps = df['predicted_alert'].sum()
-                alert_duty_cycle = float(alert_steps / max(1, len(df)))
-                alerts_per_min = float(alert_steps * 6.0)  # 6 = 60s/10s per step
-                total_alert_time_s = float(alert_steps * 10.0)
-            else:
-                alert_duty_cycle = 0.0
-                alerts_per_min = 0.0
-                total_alert_time_s = 0.0
-            
-            # Lead time calculation (simplified)
-            avg_lead_time_s = 0.0  # Would need more complex calculation
-            
-        except Exception:
-            alert_duty_cycle = 0.0
-            alerts_per_min = 0.0
-            total_alert_time_s = 0.0
-            avg_lead_time_s = 0.0
-        
-        # Intervention metrics (simplified for now)
-        num_interventions = tp_sum + fp_sum  # Total alerts as interventions
-        num_interventions_matched = tp_sum   # True positives as matched
-        num_interventions_false = fp_sum     # False positives as false interventions
-        
-        # NEW: Total reward calculation
+        # Reward total (simple CSV sum)
         try:
             if 'reward' in df.columns:
                 reward_total = float(df['reward'].sum())
@@ -477,43 +546,14 @@ def extract_comprehensive_metrics_from_csv(csv_path: str, sep_nm: float = 5.0) -
         except Exception:
             reward_total = 0.0
         
-        # FIXED: Compute oscillation_rate, resolution_fail_rate, and los_failure_rate from trajectory using HallucinationDetector
-        # These metrics are NOT in the CSV columns - they must be computed from the trajectory
-        oscillation_rate = 0.0
-        resolution_fail_rate = 0.0
-        los_failure_rate = 0.0
-        
-        try:
-            # Build trajectory structure from CSV data
-            trajectory = _build_trajectory_from_csv(df)
-            
-            from src.analysis.hallucination_detector_enhanced import HallucinationDetector
-            hd = HallucinationDetector()
-            
-            # Compute metrics
-            metrics = hd.compute(trajectory, sep_nm=5.0, return_series=False)
-            
-            # Preserve NaN to indicate "no cases to judge"
-            res_val = metrics.get("resolution_fail_rate", 0.0)
-            resolution_fail_rate = float(res_val) if not (isinstance(res_val, float) and np.isnan(res_val)) else float('nan')
-            
-            los_val = metrics.get("los_failure_rate", 0.0)
-            los_failure_rate = float(los_val) if not (isinstance(los_val, float) and np.isnan(los_val)) else float('nan')
-            
-            osc_val = metrics.get("oscillation_rate", 0.0)
-            oscillation_rate = float(osc_val) if not (isinstance(osc_val, float) and np.isnan(osc_val)) else float('nan')
-        except Exception as e:
-            print(f"Warning: Could not compute oscillation/resolution/los metrics from trajectory: {e}")
-            # Keep defaults of 0.0
-        
-        # Return the same structure as intrashift_tester
+        # Return metrics structure (all detector-sourced except extra_path and waypoint_reached)
         return {
-            "tp": tp_sum,
-            "fp": fp_sum,
-            "fn": fn_sum,
-            "tn": tn_sum,
-            "min_separation_nm": float(step_collapsed['min_separation_nm'].min()) if not step_collapsed.empty else 200.0,
-            "num_conflict_steps": int(step_collapsed['conflict_flag'].sum()) if 'conflict_flag' in step_collapsed.columns else 0,
+            "tp": tp,
+            "fp": fp,
+            "fn": fn,
+            "tn": tn,
+            "min_separation_nm": min_separation_nm,
+            "num_conflict_steps": num_conflict_steps,
             "flight_time_s": flight_time_s,
             "num_los_events": num_los_events,
             "total_los_duration": total_los_duration,
@@ -533,12 +573,12 @@ def extract_comprehensive_metrics_from_csv(csv_path: str, sep_nm: float = 5.0) -
             "alerts_per_min": alerts_per_min,
             "total_alert_time_s": total_alert_time_s,
             "avg_lead_time_s": avg_lead_time_s,
-            "ghost_conflict": fp_sum / max(1, total_steps) if total_steps > 0 else 0.0,
-            "missed_conflict": fn_sum / max(1, tp_sum + fn_sum) if (tp_sum + fn_sum) > 0 else 0.0,
-            "resolution_fail_rate": resolution_fail_rate,  # Computed from trajectory via HallucinationDetector
-            "los_failure_rate": los_failure_rate,  # NEW: Computed from trajectory via HallucinationDetector
-            "oscillation_rate": oscillation_rate,  # Computed from trajectory via HallucinationDetector
-            "reward_total": reward_total,  # NEW: Total reward from trajectory
+            "ghost_conflict": ghost_conflict,
+            "missed_conflict": missed_conflict,
+            "resolution_fail_rate": resolution_fail_rate,
+            "los_failure_rate": los_failure_rate,
+            "oscillation_rate": oscillation_rate,
+            "reward_total": reward_total,
         }
         
     except Exception as e:
@@ -603,7 +643,8 @@ def _build_trajectory_from_csv(df: pd.DataFrame) -> Dict[str, Any]:
     trajectory = {
         "positions": [],
         "actions": [],
-        "agents": {}
+        "agents": {},
+        "timestamps": []  # FIXED: Add timestamps for flight_time_s calculation
     }
     
     # Get unique timesteps and agents
@@ -626,6 +667,14 @@ def _build_trajectory_from_csv(df: pd.DataFrame) -> Dict[str, Any]:
         # Positions at this timestep
         pos_dict = {}
         action_dict = {}
+        
+        # FIXED: Extract simulation time from first row of this timestep
+        if 'sim_time_s' in step_df.columns:
+            sim_time = float(step_df['sim_time_s'].iloc[0])
+        else:
+            # Fallback: use step index * 10 seconds (typical environment timestep)
+            sim_time = float(step) * 10.0
+        trajectory["timestamps"].append(sim_time)
         
         for _, row in step_df.iterrows():
             agent_id = row['agent_id']
@@ -689,7 +738,22 @@ def haversine_nm(lat1, lon1, lat2, lon2):
     c = 2.0 * np.arcsin(np.minimum(1.0, np.sqrt(a)))
     return R_nm * c
 
-def run_model_on_scenario(algo, policy_id, scenario_json, out_dir, episodes=1, seed=123, show_progress=True) -> pd.DataFrame:
+def run_model_on_scenario(algo, policy_id, scenario_json, out_dir, episodes=1, seed=123, show_progress=True, explore=False) -> pd.DataFrame:
+    """Run model on scenario for multiple episodes.
+    
+    Args:
+        algo: RLLib algorithm instance
+        policy_id: Policy identifier
+        scenario_json: Path to scenario JSON file
+        out_dir: Output directory for results
+        episodes: Number of episodes to run
+        seed: Random seed base (incremented per episode)
+        show_progress: Whether to print progress
+        explore: If True, use stochastic policy evaluation. If False, deterministic.
+    
+    Returns:
+        DataFrame with episode metrics
+    """
     out_dir = pathlib.Path(out_dir); out_dir.mkdir(parents=True, exist_ok=True)
     rows = []
     
@@ -704,7 +768,7 @@ def run_model_on_scenario(algo, policy_id, scenario_json, out_dir, episodes=1, s
         run_dir = out_dir / f"ep_{ep+1:03d}"
         run_dir.mkdir(parents=True, exist_ok=True)
         env = build_env(scenario_json, str(run_dir), seed=seed+ep)
-        compute_once(algo, policy_id, env)
+        compute_once(algo, policy_id, env, explore=explore)
         csv_path = latest_traj_csv(run_dir)
         if csv_path:
             # Use comprehensive metrics extraction (same as targeted_shift_tester)
@@ -1135,6 +1199,8 @@ def main():
     ap.add_argument("--outdir", type=str, default="results_intershift")
     ap.add_argument("--use-gpu", action="store_true", help="Force GPU usage for testing acceleration")
     ap.add_argument("--extensive", action="store_true", help="Run extensive testing with more episodes and scenarios")
+    ap.add_argument("--stochastic", action="store_true", 
+                    help="Use stochastic policy evaluation (explore=True). Default is deterministic (explore=False) for reproducible results.")
     args = ap.parse_args()
     
     # GPU Detection and Configuration
@@ -1159,6 +1225,14 @@ def main():
         print(f"🔬 EXTENSIVE MODE: Testing with {args.episodes} episodes per scenario")
     else:
         print(f"📊 STANDARD MODE: Testing with {args.episodes} episodes per scenario")
+    
+    # Policy evaluation mode
+    if args.stochastic:
+        print(f"🎲 STOCHASTIC MODE: Using explore=True (policy samples from action distribution)")
+        print(f"   → Results will vary between runs due to policy randomness")
+    else:
+        print(f"🎯 DETERMINISTIC MODE: Using explore=False (policy takes mean/mode action)")
+        print(f"   → Results are reproducible with same seed")
 
     outdir = pathlib.Path(args.outdir).resolve(); outdir.mkdir(parents=True, exist_ok=True)
     scen_map = discover_scenarios(args.scenarios_dir)
@@ -1210,7 +1284,7 @@ def main():
         bc = None
         if not is_generic:
             base_dir = outdir / f"{alias}__on__{base_scn}__baseline"
-            base_df = run_model_on_scenario(algo, pid, scen_map[base_scn], str(base_dir), episodes=args.episodes)
+            base_df = run_model_on_scenario(algo, pid, scen_map[base_scn], str(base_dir), episodes=args.episodes, explore=args.stochastic)
             if base_df.empty:
                 print(f"[WARN] No data for baseline {alias} on {base_scn}")
                 continue
@@ -1237,7 +1311,7 @@ def main():
             if not is_generic and scen == base_scn:
                 continue
             run_dir = outdir / f"{alias}__on__{scen}{'__generic_shift' if is_generic else ''}"
-            df = run_model_on_scenario(algo, pid, scen_json, str(run_dir), episodes=args.episodes)
+            df = run_model_on_scenario(algo, pid, scen_json, str(run_dir), episodes=args.episodes, explore=args.stochastic)
             if df.empty: 
                 print(f"[WARN] No data for {alias} on {scen}")
                 continue

@@ -1,8 +1,31 @@
-"""
-Module Name: marl_collision_env_minimal.py
-Description: MARL environment for air traffic collision avoidance using BlueSky simulation.
-             Implements PettingZoo ParallelEnv with team-based PBRS, relative observations,
-             waypoint navigation, and real-time hallucination detection for analysis.
+"""                         
+MARL environment for air traffic collision avoidance using BlueSky simulation.
+
+Implements PettingZoo ParallelEnv with unified reward system and team coordination shaping.
+Agents navigate to waypoints while avoiding conflicts using continuous heading/speed control.
+
+Key Features:
+    - Unified Reward System: Progress, drift improvement, well-clear violations, waypoint bonuses
+    - Team-based PBRS: Potential-based reward shaping for coordination (team_phi)
+    - Relative Observations: Top-K neighbors with derivative features (progress_rate, safety_rate)
+    - 5 NM Separation: ICAO lateral separation standard for LoS detection
+    - Real-time Hallucination Detection: Optional conflict prediction error tracking
+
+Reward Components:
+    - r_progress: Signed waypoint approach (+) / departure (-) reward
+    - r_drift: Drift reduction from waypoint bearing (with deadzone)
+    - r_violate_entry: One-time penalty on LoS entry (-25)
+    - r_violate_step: Per-step severity penalty during LoS (depth-scaled)
+    - r_reach: Waypoint completion bonus (+10)
+    - r_terminal: Episode-end penalty for incomplete missions (-10)
+    - r_team: PBRS coordination term (weighted by responsibility)
+
+Terminology:
+    LoS: Loss of Separation (<5 NM horizontal)
+    HMD: Horizontal Miss Distance (minimum separation in NM)
+    PBRS: Potential-Based Reward Shaping (team coordination)
+    TCPA/DCPA: Time/Distance to Closest Point of Approach
+
 Author: Som
 Date: 2025-10-04
 """
@@ -29,42 +52,51 @@ import bluesky as bs
 
 
 # Action scaling from normalized [-1,1] to physical units
-D_HEADING = 18.0   # Max heading change per action (deg)
-D_VELOCITY = 10.0  # Max speed change per action (kt)
+D_HEADING = 18.0   # Max heading change per action (deg). ±18° allows significant maneuvering.
+D_VELOCITY = 10.0  # Max speed change per action (kt). ±10 kt for speed adjustments.
 
-# Action threshold - ignore micro-actions below these values
-ACTION_THRESHOLD_DEG = 3.0  # Minimum heading change to apply (deg)
-ACTION_THRESHOLD_KT = 3.0   # Minimum speed change to apply (kt)
+# Action threshold - filter micro-actions below these values to reduce control noise
+ACTION_THRESHOLD_DEG = 3.0  # Minimum heading change to apply (deg). Filters <3° micro-adjustments.
+ACTION_THRESHOLD_KT = 3.0   # Minimum speed change to apply (kt). Filters <3 kt micro-adjustments.
 
-# Team coordination reward parameters (PBRS)
-DEFAULT_TEAM_COORDINATION_WEIGHT = 0.2
-DEFAULT_TEAM_GAMMA = 0.99
-DEFAULT_TEAM_SHARE_MODE = "responsibility"
-DEFAULT_TEAM_EMA = 0.001
-DEFAULT_TEAM_CAP = 0.01
-DEFAULT_TEAM_ANNEAL = 1.0
-DEFAULT_TEAM_NEIGHBOR_THRESHOLD_KM = 10.0
+# Team coordination reward parameters (PBRS - Potential-Based Reward Shaping)
+# PBRS formula: r_team = γ*Φ(s') - Φ(s) where Φ is team potential function
+DEFAULT_TEAM_COORDINATION_WEIGHT = 0.2  # Weight for team shaping term (0.0-1.0)
+DEFAULT_TEAM_GAMMA = 0.99  # Discount factor for PBRS (matches policy discount)
+DEFAULT_TEAM_SHARE_MODE = "responsibility"  # How to distribute team reward ("equal", "neighbor", "responsibility")
+DEFAULT_TEAM_EMA = 0.001  # Exponential moving average for smoothing Φ changes
+DEFAULT_TEAM_CAP = 0.01  # Cap magnitude of team reward to prevent instability
+DEFAULT_TEAM_ANNEAL = 1.0  # Annealing factor for gradually reducing team shaping
+DEFAULT_TEAM_NEIGHBOR_THRESHOLD_KM = 10.0  # Proximity threshold for neighbor-based sharing (km)
 
-# Individual reward system defaults
-DEFAULT_PROGRESS_REWARD_PER_KM = 0.04
-DEFAULT_TIME_PENALTY_PER_SEC = -0.0005
-DEFAULT_REACH_REWARD = 10.0
-DEFAULT_VIOLATION_ENTRY_PENALTY = -25.0
-DEFAULT_VIOLATION_STEP_SCALE = -1.0
-DEFAULT_DEEP_BREACH_NM = 1.0
-DEFAULT_DRIFT_IMPROVE_GAIN = 0.01
-DEFAULT_DRIFT_DEADZONE_DEG = 8.0
-DEFAULT_ACTION_COST_PER_UNIT = -0.01
-DEFAULT_TERMINAL_NOT_REACHED_PENALTY = -10.0
+# Unified reward system defaults (all components integrated, no double-counting)
+DEFAULT_PROGRESS_REWARD_PER_KM = 0.04  # Signed progress: +0.04/km approaching, -0.04/km departing
+DEFAULT_TIME_PENALTY_PER_SEC = -0.0005  # Small time penalty to encourage efficiency
+DEFAULT_REACH_REWARD = 10.0  # One-time bonus for waypoint completion
+DEFAULT_VIOLATION_ENTRY_PENALTY = -25.0  # One-time penalty on LoS entry (<5 NM)
+DEFAULT_VIOLATION_STEP_SCALE = -1.0  # Per-step LoS severity: -1.0 * depth/5NM (linear)
+DEFAULT_DEEP_BREACH_NM = 1.0  # Deep breach threshold (NM). Severity increases <1 NM.
+DEFAULT_DRIFT_IMPROVE_GAIN = 0.01  # Reward for drift reduction: +0.01 per degree improved
+DEFAULT_DRIFT_DEADZONE_DEG = 8.0  # Deadzone to avoid oscillation penalties (deg)
+DEFAULT_ACTION_COST_PER_UNIT = -0.01  # Penalize control effort: -0.01 per normalized action unit
+DEFAULT_TERMINAL_NOT_REACHED_PENALTY = -10.0  # Episode-end penalty for incomplete missions
 
-# Physical constants
-NM_TO_KM = 1.852
-DRIFT_NORM_DEN = 180.0
-WAYPOINT_THRESHOLD_NM = 1.0
+# Physical constants and normalization
+NM_TO_KM = 1.852  # Nautical miles to kilometers conversion
+DRIFT_NORM_DEN = 180.0  # Drift normalization denominator (degrees). Max drift = 180°.
+WAYPOINT_THRESHOLD_NM = 1.0  # Waypoint capture radius (NM). Agent completes within 1 NM.
 
 
 def kt_to_nms(kt):
-    """Convert knots to nautical miles per second."""
+    """
+    Convert speed from knots to nautical miles per second.
+    
+    Args:
+        kt: Speed (kt = NM/h).
+        
+    Returns:
+        Speed (NM/s).
+    """
     return kt / 3600.0
 
 
@@ -81,23 +113,63 @@ def _clean_bs():
 
 
 def nm_to_lat_deg(nm: float) -> float:
-    """Convert nautical miles to latitude degrees."""
+    """
+    Convert nautical miles to latitude degrees.
+    
+    1 degree latitude ≈ 60 NM everywhere on Earth.
+    
+    Args:
+        nm: Distance (NM).
+        
+    Returns:
+        Latitude degrees.
+    """
     return nm / 60.0
 
 
 def nm_to_lon_deg(nm: float, lat_deg: float) -> float:
-    """Convert nautical miles to longitude degrees at given latitude."""
+    """
+    Convert nautical miles to longitude degrees at given latitude.
+    
+    Longitude degree width varies with latitude: 1° = 60*cos(lat) NM.
+    
+    Args:
+        nm: Distance (NM).
+        lat_deg: Reference latitude (degrees).
+        
+    Returns:
+        Longitude degrees at that latitude.
+    """
     return nm / (60.0 * max(1e-6, math.cos(math.radians(lat_deg))))
 
 
 def heading_to_unit(heading_deg: float):
-    """Convert heading to unit vector (east, north)."""
+    """
+    Convert heading to unit velocity vector.
+    
+    Args:
+        heading_deg: Heading in degrees (0=north, 90=east, clockwise).
+        
+    Returns:
+        Tuple (east_component, north_component).
+    """
     rad = math.radians(90.0 - heading_deg)
     return (math.cos(rad), math.sin(rad))
 
 
 def haversine_nm(lat1_deg: float, lon1_deg: float, lat2_deg: float, lon2_deg: float) -> float:
-    """Calculate great-circle distance in nautical miles."""
+    """
+    Calculate great-circle distance between two points.
+    
+    Uses haversine formula with Earth radius = 3440.065 NM.
+    
+    Args:
+        lat1_deg, lon1_deg: First point coordinates (degrees).
+        lat2_deg, lon2_deg: Second point coordinates (degrees).
+        
+    Returns:
+        Great-circle distance (NM).
+    """
     from math import radians, sin, cos, sqrt, atan2
     
     lat1, lon1, lat2, lon2 = map(radians, [lat1_deg, lon1_deg, lat2_deg, lon2_deg])
@@ -115,7 +187,39 @@ class MARLCollisionEnv(ParallelEnv):
     
     Simulates multi-aircraft scenarios with BlueSky dynamics. Agents navigate to waypoints
     while avoiding conflicts using continuous heading/speed control. Features unified reward
-    system with team-based PBRS, relative observations, and comprehensive trajectory logging.
+    system with team-based PBRS for coordination learning.
+    
+    Unified Reward System:
+        r_total = r_progress + r_drift + r_violate_entry + r_violate_step +
+                  r_act_cost + r_time + r_reach + r_terminal + r_team
+        
+        No double-counting: Each reward component addresses distinct behavior.
+        
+        - r_progress: Signed waypoint approach reward (±0.04/km)
+        - r_drift: Drift reduction shaping (0.01/deg improvement, with 8° deadzone)
+        - r_violate_entry: One-time LoS entry penalty (-25)
+        - r_violate_step: Per-step LoS severity (-1.0 * depth, boosted <1 NM)
+        - r_act_cost: Control effort penalty (-0.01 per unit)
+        - r_time: Small efficiency penalty (-0.0005/s)
+        - r_reach: Waypoint completion bonus (+10)
+        - r_terminal: Incomplete mission penalty (-10 at episode end)
+        - r_team: PBRS coordination term (weighted by responsibility)
+    
+    Team PBRS:
+        Φ(s) = piecewise potential function based on minimum separation:
+            - [0, 5 NM]: 0.5 * (sep / 5)  (steep gradient inside LoS)
+            - [5, 10 NM]: 0.5 + 0.5 * min((sep - 5) / 5, 1)  (gradual well-clear)
+            - ≥10 NM: 1.0 (safe separation achieved)
+        
+        r_team = w * weight_i * γ * [Φ(s') - Φ(s)]  (EMA-smoothed, capped)
+        
+        Responsibility weights: Higher for agents in conflicting pairs.
+    
+    Observations (Relative Mode):
+        - Waypoint signals: distance (tanh-normalized), bearing (cos/sin)
+        - Ownship: Airspeed (normalized around 150 m/s)
+        - Derivative features: progress_rate (signed), safety_rate (signed)
+        - Top-K neighbors: Relative positions/velocities in local frame
     
     Args:
         env_config (dict): Configuration parameters including scenario_path, neighbor_topk,
@@ -366,7 +470,20 @@ class MARLCollisionEnv(ParallelEnv):
         return obs, 0.0, False, {}
 
     def reset(self, seed=None, options=None):
-        """Reset environment to initial state with optional distribution shifts.
+        """
+        Reset environment to initial state with optional distribution shifts.
+        
+        Distribution shifts enable robustness testing:
+            - targeted_shift: Per-agent deltas {agent_id: {heading_deg_delta, speed_kt_delta, ...}}
+            - env_shift: Environmental changes (wind layers, speed bound scaling)
+            - shift: Legacy unison shifts (all agents shifted identically)
+        
+        Shift types:
+            - position_lat_delta, position_lon_delta: Position offsets (degrees)
+            - heading_deg_delta: Initial heading change (degrees)
+            - speed_kt_delta: Initial speed change (kt)
+            - aircraft_type: Override aircraft model (B737, B747, CRJ2, etc.)
+            - waypoint_lat_delta, waypoint_lon_delta: Destination offsets (degrees)
         
         Args:
             seed: Random seed (unused, deterministic by design).
@@ -566,6 +683,31 @@ class MARLCollisionEnv(ParallelEnv):
         return obs, infos
 
     def step(self, actions: Dict[str, np.ndarray]):
+        """
+        Execute actions and return observations, rewards, terminations, truncations, infos.
+        
+        Action Processing:
+            1. Normalize actions to [-1, 1] and apply delay queue if enabled
+            2. Scale to physical units: [±18° heading, ±10 kt speed]
+            3. Filter micro-actions below thresholds (3°, 3 kt)
+            4. Apply to BlueSky aircraft (HDG/SPD commands)
+            5. Advance simulation 10 steps (10s total with 1s timesteps)
+        
+        Reward Calculation:
+            Unified system with 9 components (see class docstring).
+            All agents receive individual + team PBRS rewards.
+        
+        Termination Conditions:
+            - all_at_waypoint: All agents within 1 NM of waypoints
+            - time_limit_reached: step_idx ≥ max_episode_steps
+            Episode ends when either condition met (no early collision termination).
+        
+        Args:
+            actions: Dict {agent_id: np.ndarray([hdg_delta, spd_delta])} normalized to [-1, 1].
+        
+        Returns:
+            Tuple (observations, rewards, terminations, truncations, infos).
+        """
         if not self.agents:
             return {}, {}, {}, {}, {}
 
@@ -962,7 +1104,33 @@ class MARLCollisionEnv(ParallelEnv):
         return obs, rewards, terminations, truncations, infos
 
     def _relative_obs_for(self, aid: str) -> dict:
-        """Return dict obs with relative features including derivative headroom constraints."""
+        """
+        Build relative observation for agent with derivative headroom constraints.
+        
+        Observation Components:
+            Goal signals:
+                - wp_dist_norm: tanh(distance/20 NM) - normalized waypoint distance
+                - cos_to_wp, sin_to_wp: Bearing to waypoint vs current heading
+            
+            Ownship state:
+                - airspeed: (TAS - 150 m/s) / 6, clipped to [−10, 10]
+            
+            Derivative features (headroom constraints):
+                - progress_rate: tanh(Δdist / 2 NM) - signed waypoint progress rate
+                - safety_rate: tanh(Δmin_sep / 5 NM) - signed separation rate
+            
+            Top-K neighbors (distance-sorted):
+                - x_r, y_r: Relative positions in local ENU frame (NM, scaled)
+                - vx_r, vy_r: Relative velocities (NM/s, scaled)
+        
+        All values clipped to observation space bounds for stability.
+        
+        Args:
+            aid: Agent ID.
+            
+        Returns:
+            Dict observation matching observation_space(aid).
+        """
         idx = bs.traf.id2idx(aid)
         if not isinstance(idx, int) or idx < 0:
             K = self.neighbor_topk
@@ -1105,7 +1273,20 @@ class MARLCollisionEnv(ParallelEnv):
         }
 
     def _update_rt_trajectory(self, actions: Dict[str, np.ndarray]):
-        """Update real-time trajectory data for hallucination detection."""
+        """
+        Update real-time trajectory data for hallucination detection.
+        
+        Captures per-timestep:
+            - Positions: {agent_id: (lat, lon)}
+            - Actions: {agent_id: [hdg_delta_deg, spd_delta_kt]}
+            - Agent states: Headings (deg), speeds (kt)
+            - Waypoint status: {agent_id: {timestep: reached_bool}}
+        
+        This data feeds the HallucinationDetector for real-time analysis.
+        
+        Args:
+            actions: Normalized actions [-1, 1] for heading/speed deltas.
+        """
         if not self._enable_hallucination_detection or not self._hallucination_detector:
             return
             
@@ -1158,7 +1339,28 @@ class MARLCollisionEnv(ParallelEnv):
             self._rt_trajectory["waypoint_status"][aid][step_idx] = self._agent_wpreached.get(aid, False)
 
     def _collect_observations(self) -> Dict[str, np.ndarray]:
-        """Build relative observations for all agents."""
+        """
+        Build relative observations for all agents.
+        
+        Observation structure per agent (7 + 4*K features in dict format):
+            Self state (6 scalars + derivatives):
+                - wp_dist_norm: Normalized distance to waypoint [-1, 1]
+                - cos_to_wp, sin_to_wp: Waypoint bearing components [-1, 1]
+                - airspeed: Normalized TAS [-10, 10]
+                - progress_rate: Waypoint approach rate (NM/s, clipped [-1, 1])
+                - safety_rate: Minimum separation change rate (NM/s, clipped [-1, 1])
+            
+            Per-neighbor state (4*K arrays, K={neighbor_topk}):
+                - x_r[K], y_r[K]: Relative positions in ENU frame (NM, clipped [-12, 12])
+                - vx_r[K], vy_r[K]: Relative velocities (kt, clipped [-150, 150])
+        
+        Neighbor selection:
+            Top-K by horizontal separation (closest K agents).
+            Zero-padding if <K neighbors exist.
+        
+        Returns:
+            Observations dict {agent_id: dict_observation}.
+        """
         obs = {}
         
         try:
@@ -1202,7 +1404,37 @@ class MARLCollisionEnv(ParallelEnv):
                   pairwise_dist_nm: Dict[str, Dict[str, float]], 
                   dist_wp_nm_by_agent: Dict[str, float], conflict_pairs_count: int,
                   reward_parts_by_agent: Dict[str, dict], first_time_reach: Dict[str, bool]):
-        """Append step trace rows for all agents with enhanced data including real-time hallucination detection."""        
+        """
+        Append step trace rows for all agents with enhanced data including real-time hallucination detection.
+        
+        Logged Data:
+            - State: lat, lon, alt, heading, tas, cas
+            - Actions: heading_delta (deg), speed_delta (kt)
+            - Rewards: Individual components + team + total
+            - Separation: Per-agent minimum + pairwise distances to all others
+            - Conflicts: Binary flags + pair count
+            - Waypoints: Distance (NM) + reached status
+            - Real-time hallucination: gt_conflict, predicted_alert, TP/FP/FN/TN
+        
+        Real-time Hallucination Metrics (if enabled):
+            Computed by HallucinationDetector on cumulative trajectory.
+            Requires ≥2 timesteps for detection. Per-timestep flags:
+                - gt_conflict: Ground truth conflict (TCPA/DCPA < thresholds)
+                - predicted_alert: Policy alert (action magnitude + gating)
+                - tp/fp/fn/tn: Confusion matrix elements
+        
+        Agents who have reached waypoints stop logging to avoid clutter.
+        
+        Args:
+            conflict_flags: Binary conflict indicator per agent.
+            collision_flags: Binary collision indicator per agent (<1 NM).
+            rewards: Total reward per agent.
+            pairwise_dist_nm: Full separation matrix {agent_i: {agent_j: distance_nm}}.
+            dist_wp_nm_by_agent: Distance to waypoint per agent.
+            conflict_pairs_count: Number of conflicting pairs this step.
+            reward_parts_by_agent: Reward breakdown per agent.
+            first_time_reach: Whether agent reached waypoint this step (first time).
+        """
         # Compute real-time hallucination metrics if enabled
         rt_hallucination_data = {}
         if (self._enable_hallucination_detection and self._hallucination_detector and 
@@ -1333,7 +1565,21 @@ class MARLCollisionEnv(ParallelEnv):
             self._traj_rows.append(row)
     
     def _save_trajectory_csv(self):
-        """Save trajectory data to CSV file."""
+        """
+        Save trajectory data to CSV file.
+        
+        CSV columns include:
+            - Identification: episode_id, step_idx, sim_time_s, agent_id
+            - State: lat_deg, lon_deg, alt_ft, hdg_deg, tas_kt, cas_kt
+            - Actions: action_hdg_delta_deg, action_spd_delta_kt
+            - Rewards: All components + total (reward_progress, reward_drift, etc.)
+            - Separation: min_separation_nm, dist_to_{agent}_nm for each agent
+            - Conflicts: conflict_flag, collision_flag, conflict_pairs_count
+            - Waypoints: wp_dist_nm, waypoint_reached, waypoint_hits
+            - Hallucination: gt_conflict, predicted_alert, tp, fp, fn, tn
+        
+        Filename: traj_{episode_tag}.csv or traj_ep_{episode_id:04d}.csv
+        """
         if not self._traj_rows:
             return
             
@@ -1365,10 +1611,22 @@ class MARLCollisionEnv(ParallelEnv):
         self._traj_rows = []
 
     def _compute_team_phi(self) -> float:
-        """Compute team potential Phi(s) with enhanced sensitivity near 5 NM threshold.
+        """
+        Compute team potential Φ(s) with enhanced sensitivity near 5 NM threshold.
         
-        Potential function: 0 at 0 NM, 0.5 at 5 NM, 1 at ≥10 NM (piecewise-linear with kink at sep_nm)
-        This provides stronger gradients near the well-clear boundary for better coordination.
+        Piecewise-linear potential function with kink at sep_nm:
+            - sep ≤ 5 NM: Φ = 0.5 * (sep / 5)         [0.0 at 0 NM, 0.5 at 5 NM]
+            - sep > 5 NM: Φ = 0.5 + 0.5 * min((sep - 5) / 5, 1)  [0.5 at 5 NM, 1.0 at 10+ NM]
+        
+        This provides:
+            - Strong gradient inside LoS (<5 NM) for conflict avoidance
+            - Moderate gradient in well-clear region (5-10 NM) for separation maintenance
+            - Flat region beyond 10 NM (no further coordination needed)
+        
+        Uses global minimum separation across all pairs.
+        
+        Returns:
+            Team potential Φ(s) ∈ [0, 1].
         """
         ids = self.agents
         if not ids or len(ids) < 2:

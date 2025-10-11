@@ -1,11 +1,26 @@
 """
-Module Name: hallucination_detector_enhanced.py
-Description: Real-time detection of conflict prediction errors (hallucinations) in MARL-based ATC systems.
+Real-time hallucination detection for MARL air traffic control systems.
+
+Detects conflict prediction errors (hallucinations) by comparing ground truth conflict predictions
+(TCPA/DCPA-based) against policy action patterns. Identifies false alerts (ghost conflicts) and 
+missed conflicts using sophisticated filtering techniques:
+
+- Intent-aware gating: Filters out routine navigation maneuvers toward waypoints
+- Threat-aware gating: Requires proximate threat (TCPA/DCPA within bounds) to trigger alerts
+- N-of-M debouncing: Requires N detections in M-step window to reduce transient false positives
+- IoU-based event matching: Matches alert windows to ground truth windows using intersection-over-union
+- Resolution tracking: Monitors post-conflict separation to assess conflict resolution success
+
+Terminology:
+    LoS: Loss of Separation (<5 NM horizontal)
+    HMD: Horizontal Miss Distance (minimum separation in NM)
+    TCPA: Time to Closest Point of Approach (s)
+    DCPA: Distance at Closest Point of Approach (NM)
+    IoU: Intersection over Union (temporal window overlap metric)
+    5 NM well-clear: ICAO lateral separation standard
+
 Author: Som
 Date: 2025-10-04
-
-Compares ground truth conflict predictions (TCPA/DCPA) against policy action patterns to identify
-false alerts and missed conflicts with intent-aware filtering and IoU-based window matching.
 """
 
 import math
@@ -15,7 +30,16 @@ import numpy as np
 
 
 def _bearing_deg(lat1, lon1, lat2, lon2):
-    """Calculate initial bearing from point 1 to point 2 in degrees."""
+    """
+    Calculate initial bearing from point 1 to point 2.
+    
+    Args:
+        lat1, lon1: Origin coordinates (degrees).
+        lat2, lon2: Destination coordinates (degrees).
+        
+    Returns:
+        Initial bearing in degrees (0-360, 0=north).
+    """
     y = math.sin(math.radians(lon2 - lon1)) * math.cos(math.radians(lat2))
     x = (math.cos(math.radians(lat1)) * math.sin(math.radians(lat2)) -
          math.sin(math.radians(lat1)) * math.cos(math.radians(lat2)) *
@@ -24,24 +48,34 @@ def _bearing_deg(lat1, lon1, lat2, lon2):
     return brg
 
 def _angdiff(a, b):
-    """Calculate the smallest angular difference between angles a and b."""
+    """
+    Calculate smallest angular difference between two angles.
+    
+    Args:
+        a: First angle (degrees).
+        b: Second angle (degrees).
+        
+    Returns:
+        Smallest angular difference (degrees, always positive).
+    """
     d = (a - b + 180.0) % 360.0 - 180.0
     return d
 
 def _threat_for_agent(pos_t, hdg_t, spd_t, aid, horizon_s, los_nm):
     """
-    Find the most threatening intruder aircraft for a given agent.
+    Find the most threatening intruder aircraft for a given agent using TCPA/DCPA metrics.
     
     Args:
-        pos_t: Dictionary of agent positions at current timestep
-        hdg_t: Dictionary of agent headings at current timestep  
-        spd_t: Dictionary of agent speeds at current timestep
-        aid: Target agent ID to find threats for
-        horizon_s: Time horizon for TCPA/DCPA calculations
-        los_nm: Loss of separation threshold in nautical miles
+        pos_t: Dictionary of agent positions {agent_id: (lat, lon)} at current timestep.
+        hdg_t: Dictionary of agent headings {agent_id: heading_deg} at current timestep.
+        spd_t: Dictionary of agent speeds {agent_id: speed_kt} at current timestep.
+        aid: Target agent ID to find threats for.
+        horizon_s: Time horizon for TCPA/DCPA calculations (s).
+        los_nm: Loss of separation threshold (NM).
     
     Returns:
-        Tuple of (intruder_id, tcpa_seconds, dcpa_nautical_miles) for most threatening intruder
+        Tuple (intruder_id, tcpa_s, dcpa_nm) for most threatening intruder.
+        Most threatening = smallest DCPA, with TCPA as tiebreaker.
     """
     lat_i, lon_i = pos_t[aid]
     hi, si_kt = hdg_t[aid], spd_t[aid]
@@ -65,7 +99,16 @@ def _threat_for_agent(pos_t, hdg_t, spd_t, aid, horizon_s, los_nm):
 
 
 def haversine_nm(lat1, lon1, lat2, lon2):
-    """Calculate great circle distance in nautical miles."""
+    """
+    Calculate great-circle distance between two points.
+    
+    Args:
+        lat1, lon1: First point coordinates (degrees).
+        lat2, lon2: Second point coordinates (degrees).
+        
+    Returns:
+        Great-circle distance (NM).
+    """
     R_nm = 3440.065
     dlat = math.radians(lat2 - lat1)
     dlon = math.radians(lon2 - lon1)
@@ -76,12 +119,28 @@ def haversine_nm(lat1, lon1, lat2, lon2):
     return R_nm * c
 
 def heading_to_unit(heading_deg: float) -> Tuple[float, float]:
-    """Convert heading in degrees to unit vector (east, north)."""
+    """
+    Convert heading to unit velocity vector.
+    
+    Args:
+        heading_deg: Heading in degrees (0=north, 90=east).
+        
+    Returns:
+        Tuple (east_component, north_component).
+    """
     rad = math.radians(90.0 - heading_deg)
     return (math.cos(rad), math.sin(rad))
 
 def kt_to_nms(kt: float) -> float:
-    """Convert knots to nautical miles per second."""
+    """
+    Convert speed from knots to NM/s.
+    
+    Args:
+        kt: Speed (kt = NM/h).
+        
+    Returns:
+        Speed (NM/s).
+    """
     return kt / 3600.0
 
 
@@ -91,15 +150,18 @@ def compute_tcpa_dcpa_nm(lat_i, lon_i, vi_east_nms, vi_north_nms,
     """
     Compute Time to Closest Point of Approach (TCPA) and Distance at CPA (DCPA).
     
+    Uses relative velocity projection to find CPA along constant-velocity trajectories.
+    TCPA is clamped to [0, horizon_s] to focus on near-term conflicts.
+    
     Args:
-        lat_i, lon_i: Aircraft i position in degrees
-        vi_east_nms, vi_north_nms: Aircraft i velocity in NM/s
-        lat_j, lon_j: Aircraft j position in degrees  
-        vj_east_nms, vj_north_nms: Aircraft j velocity in NM/s
-        horizon_s: Maximum time horizon for TCPA calculation
+        lat_i, lon_i: Aircraft i position (degrees).
+        vi_east_nms, vi_north_nms: Aircraft i velocity (NM/s).
+        lat_j, lon_j: Aircraft j position (degrees).
+        vj_east_nms, vj_north_nms: Aircraft j velocity (NM/s).
+        horizon_s: Maximum time horizon for TCPA calculation (s).
         
     Returns:
-        Tuple of (tcpa_seconds, dcpa_nautical_miles)
+        Tuple (tcpa_s, dcpa_nm).
     """
     # Convert lat/lon differences to relative positions in NM
     dx_nm = haversine_nm(lat_i, lon_i, lat_i, lon_j) * (1 if lon_j >= lon_i else -1)
@@ -129,7 +191,27 @@ class HallucinationDetector:
     
     Detects false alerts (ghost conflicts) and missed conflicts by comparing ground truth
     TCPA/DCPA-based conflict predictions with policy action patterns. Uses sophisticated
-    intent-aware filtering and threat-aware gating to minimize false positives.
+    filtering to minimize false positives:
+    
+    Alert Gating Mechanisms:
+        - Intent-aware filtering: Ignores navigation turns toward waypoints
+        - Threat-aware filtering: Requires proximate threat (TCPA ≤ horizon, DCPA ≤ 6 NM)
+        - Action magnitude thresholds: Filters micro-actions below heading/speed thresholds
+    
+    Temporal Filtering:
+        - N-of-M debouncing: Requires N detections in M-step window (e.g., 2-of-3)
+        - Lag expansion: Extends alert periods by ±steps to capture alert windows
+    
+    Event Matching:
+        - IoU-based matching: Matches alert windows to ground truth using temporal overlap
+        - Resolution tracking: Monitors post-conflict separation in trailing window
+    
+    Metrics:
+        - Precision/Recall: Event-level detection performance
+        - Resolution success: Post-conflict separation achievement
+        - LoS failure rate: Tactical failure (actual LoS during conflict)
+        - Oscillation rate: Control stability (sign-flip + total variation)
+        - Lead time: Alert arrival before conflict onset
     """
 
     def __init__(self, horizon_s: float = 120.0, action_thresh=(3.0, 5.0),
@@ -141,16 +223,18 @@ class HallucinationDetector:
         Initialize the hallucination detector.
         
         Args:
-            horizon_s: Time horizon for TCPA/DCPA calculations
-            action_thresh: Tuple of (heading_deg, speed_kt) thresholds for alert detection
-            res_window_s: Time window for resolution verification after conflicts
-            action_period_s: Environment timestep duration in seconds
-            los_threshold_nm: Loss of separation threshold in nautical miles
-            lag_pre_steps: Alert expansion steps before detected action
-            lag_post_steps: Alert expansion steps after detected action
-            debounce_n: Minimum detections in window (e.g., 2 of 3)
-            debounce_m: Debounce window size in timesteps
-            iou_threshold: Intersection over Union threshold for event matching
+            horizon_s: TCPA/DCPA time horizon (s). Conflicts beyond this are ignored.
+            action_thresh: Tuple (heading_threshold_deg, speed_threshold_kt) for alert detection.
+                Actions below these magnitudes are filtered as micro-adjustments.
+            res_window_s: Time window after conflict end to verify separation recovery (s).
+            action_period_s: Environment timestep duration (s). Typically 10s per action.
+            los_threshold_nm: LoS threshold (NM). Standard ICAO lateral separation is 5 NM.
+            lag_pre_steps: Alert window expansion before detected action (timesteps).
+            lag_post_steps: Alert window expansion after detected action (timesteps).
+            debounce_n: Minimum detections required in M-step window for N-of-M filter.
+            debounce_m: Window size for N-of-M debouncing (timesteps).
+            iou_threshold: Minimum IoU for matching alert windows to ground truth events.
+                IoU = |intersection| / |union| of time intervals. Typical: 0.1-0.3.
         """
         self.horizon_s = float(horizon_s)
         self.theta_min_deg = float(action_thresh[0])
@@ -166,13 +250,20 @@ class HallucinationDetector:
 
     def _detect_los_events(self, pos_seq: List[Dict[str, Tuple[float, float]]]) -> Dict[str, Any]:
         """
-        Detect Loss of Separation (LOS) events between aircraft pairs.
+        Detect Loss of Separation (LoS) events between aircraft pairs.
+        
+        LoS event = continuous period where any pair has separation < los_threshold_nm.
+        Tracks minimum separation per event and total LoS duration across episode.
         
         Args:
-            pos_seq: Sequence of position dictionaries by timestep
+            pos_seq: Sequence of position dictionaries {agent_id: (lat, lon)} per timestep.
             
         Returns:
-            Dictionary containing LOS event statistics and details
+            Dictionary with keys:
+                - num_los_events: Count of LoS periods
+                - total_los_duration: Total timesteps in LoS
+                - min_separation_nm: Global minimum HMD across episode
+                - los_events: List of event details (start/end/duration/min_sep/pair)
         """
         T = len(pos_seq)
         los_events = []
@@ -234,14 +325,26 @@ class HallucinationDetector:
 
     def _calculate_efficiency_metrics(self, trajectory: Dict[str, Any]) -> Dict[str, float]:
         """
-        Calculate path efficiency and completion metrics.
+        Calculate path efficiency and waypoint completion metrics.
+        
+        Computes:
+            - Total/average path length (NM)
+            - Flight time (s)
+            - Path efficiency (ratio of expected vs actual time)
+            - Waypoint reach ratio (fraction of agents reaching waypoints)
+            - Extra path metrics (deviation from direct route)
+        
+        Waypoint completion detection uses multiple methods:
+            1. CSV waypoint_reached column (if available, most reliable)
+            2. Trajectory waypoint_status metadata
+            3. Distance-based detection (≤1 NM from waypoint)
+            4. Flight duration heuristic (>50 steps → likely completed)
         
         Args:
-            trajectory: Episode trajectory data with positions, waypoints, and metadata
+            trajectory: Episode trajectory dict with positions, waypoints, metadata.
             
         Returns:
-            Dictionary of efficiency metrics including path lengths, completion rates,
-            and deviations from optimal routes
+            Dictionary of efficiency metrics (path lengths, time, completion rates).
         """
         pos_seq = trajectory.get("positions", [])
         timestamps = trajectory.get("timestamps", [])
@@ -343,19 +446,35 @@ class HallucinationDetector:
         """
         Generate alert flags from agent actions using intent-aware and threat-aware filtering.
         
-        This method filters out routine navigation actions and only triggers alerts when:
-        1. Action magnitude exceeds thresholds (heading/speed changes)
-        2. Action is not purely navigational (toward waypoint)
-        3. A near-term threat exists (TCPA/DCPA within bounds)
+        Three-stage filtering to minimize false positives:
+        
+        1. Action Magnitude Filter:
+           Triggers if |heading_change| ≥ theta_min_deg OR |speed_change| ≥ v_min_kt.
+           Filters out micro-adjustments (±2-3° heading, ±2-3 kt speed).
+        
+        2. Intent-Aware Filter (Navigation Gating):
+           Ignores turns that reduce drift from waypoint bearing.
+           If (drift_after + slack) < drift_before, action is classified as navigation.
+           Slack parameter (1°) prevents penalizing near-optimal navigation.
+        
+        3. Threat-Aware Filter (Proximity Gating):
+           Requires intruder with:
+               - 0 ≤ TCPA ≤ horizon_s
+               - DCPA ≤ gate_nm (typically max(5, 6) NM)
+           Without proximate threat, action may be routine traffic avoidance.
+        
+        Temporal Processing:
+            - N-of-M debouncing: Requires N alerts in M-step window (e.g., 2-of-3)
+            - Lag expansion: Extends alert periods by [t-lag_pre, t+lag_post]
         
         Args:
-            actions_seq: Sequence of action dictionaries by timestep
-            trajectory: Episode trajectory containing positions, waypoints, and agent data
+            actions_seq: Sequence of action dicts {agent_id: [hdg_delta, spd_delta]} per timestep.
+            trajectory: Episode trajectory with positions, waypoints, agent data.
             
         Returns:
-            Tuple of (alert_flags_array, metadata_list) where alert_flags is a boolean
-            array indicating alert status per timestep, and metadata contains threat
-            information for each alert
+            Tuple of (alert_flags_array, metadata_list):
+                - alert_flags: Boolean array indicating alert status per timestep
+                - metadata: Per-timestep dicts with {agent, intruder, tcpa_s, dcpa_nm, dpsi_deg, dv_kt}
         """
         T = len(actions_seq)
         alerts = np.zeros(T, dtype=bool)
@@ -454,13 +573,20 @@ class HallucinationDetector:
         """
         Generate ground truth conflict flags based on TCPA/DCPA calculations.
         
+        Conflict definition: Any pair with DCPA < sep_nm within horizon_s.
+        Agents who have reached their waypoints are excluded from conflict detection
+        to avoid penalizing completed agents for lingering near their destinations.
+        
         Args:
-            traj: Episode trajectory data
-            sep_nm: Separation threshold in nautical miles
-            waypoint_status: Optional waypoint completion status by agent and timestep
+            traj: Episode trajectory data with positions, agents, waypoint_status.
+            sep_nm: Separation threshold (NM). Typically 5 NM for ICAO lateral separation.
+            waypoint_status: Optional dict {agent_id: {timestep: reached_bool}} for exclusion.
             
         Returns:
-            Tuple of (conflict_flags_array, minimum_cpa, conflict_timestep_count)
+            Tuple (conflict_flags, min_cpa_nm, num_conflict_timesteps):
+                - conflict_flags: Boolean array, True if any pair in conflict at timestep
+                - min_cpa: Minimum DCPA observed across all pairs/timesteps
+                - num_conflict_timesteps: Total timesteps with active conflicts
         """
         pos_seq = traj.get("positions", [])
         agents = traj.get("agents", {})
@@ -513,7 +639,20 @@ class HallucinationDetector:
         return g, min_cpa, num_conflict_steps
 
     def _merge_runs(self, b: np.ndarray, expand_steps: int = 0):
-        """Merge consecutive True values in boolean array into runs, optionally expanding each run."""
+        """
+        Merge consecutive True values in boolean array into time intervals (runs).
+        
+        Optionally expands each run by expand_steps in both directions to create
+        buffer zones around alert/conflict periods. This accounts for detection lag
+        and response time in alert systems.
+        
+        Args:
+            b: Boolean array.
+            expand_steps: Number of timesteps to expand each run in both directions.
+            
+        Returns:
+            List of (start, end) tuples representing time intervals.
+        """
         runs = []
         T = len(b)
         i = 0
@@ -532,7 +671,19 @@ class HallucinationDetector:
         return runs
 
     def _compute_iou(self, run1: Tuple[int, int], run2: Tuple[int, int]) -> float:
-        """Compute Intersection over Union (IoU) for two time intervals."""
+        """
+        Compute Intersection over Union (IoU) for two time intervals.
+        
+        IoU = |intersection| / |union| measures temporal overlap.
+        IoU = 0: No overlap. IoU = 1: Perfect overlap.
+        
+        Args:
+            run1: First interval (start, end) in timesteps.
+            run2: Second interval (start, end) in timesteps.
+        
+        Returns:
+            IoU value in [0, 1].
+        """
         start1, end1 = run1
         start2, end2 = run2
         
@@ -553,11 +704,21 @@ class HallucinationDetector:
 
     def _match_windows(self, G: List[Tuple[int, int]], A: List[Tuple[int, int]], 
                        iou_threshold: float = 0.1) -> Tuple[List[Tuple[int, int]], set]:
-        """Match ground truth windows G with alert windows A using IoU threshold.
+        """
+        Match ground truth windows G with alert windows A using IoU threshold.
+        
+        Uses greedy matching: for each ground truth window, find best alert window
+        by IoU. Once an alert window is matched, it cannot be reused (1-to-1 matching).
+        
+        Args:
+            G: Ground truth event windows (start, end).
+            A: Alert event windows (start, end).
+            iou_threshold: Minimum IoU to consider a match (typically 0.1).
         
         Returns:
-            matches: List of (G_idx, A_idx) pairs
-            used_A: Set of A indices that were matched
+            Tuple (matches, used_A):
+                - matches: List of (G_idx, A_idx) pairs
+                - used_A: Set of A indices that were matched
         """
         matches = []
         used_A = set()
@@ -583,7 +744,15 @@ class HallucinationDetector:
         return matches, used_A
 
     def _min_hmd_series(self, pos_seq: List[Dict[str, Tuple[float, float]]]) -> np.ndarray:
-        """Compute per-step minimum horizontal miss distance series."""
+        """
+        Compute per-timestep minimum horizontal miss distance (HMD) series.
+        
+        Args:
+            pos_seq: Sequence of position dicts {agent_id: (lat, lon)} per timestep.
+            
+        Returns:
+            Array of minimum pairwise separations (NM) per timestep.
+        """
         T = len(pos_seq)
         per_step_min_sep = np.zeros(T, dtype=float)
         
@@ -605,9 +774,26 @@ class HallucinationDetector:
 
     def _resolution_cm(self, trajectory: Dict[str, Any], G: List[Tuple[int, int]], 
                        matches: List[Tuple[int, int]], d_sep_nm: float, window_s: float) -> Dict[str, int]:
-        """Compute resolution success/failure for matched conflict windows.
+        """
+        Compute resolution success/failure for matched conflict windows.
         
-        Returns both post-conflict separation (resolution) and during-conflict LoS metrics.
+        Two-level assessment:
+        1. During-conflict LoS (tactical failure): min_sep < d_sep_nm during conflict window
+        2. Post-conflict resolution (strategic success): min_sep > d_sep_nm in trailing window
+        
+        Args:
+            trajectory: Episode trajectory with position data.
+            G: Ground truth conflict windows (start, end).
+            matches: Matched (G_idx, A_idx) pairs from IoU matching.
+            d_sep_nm: Desired separation threshold (NM).
+            window_s: Time window after conflict end to verify separation (s).
+        
+        Returns:
+            Dictionary with keys:
+                - tp_res: Conflicts achieving post-conflict separation
+                - fn_res: Conflicts failing post-conflict separation
+                - tp_los: Conflicts avoiding LoS during conflict (tactical success)
+                - fn_los: Conflicts with LoS during conflict (tactical failure)
         """
         pos_seq = trajectory.get("positions", [])
         T = len(pos_seq)
@@ -672,7 +858,15 @@ class HallucinationDetector:
         }
 
     def _min_hmd_window(self, window_steps: List[Dict[str, Tuple[float, float]]]) -> float:
-        """Minimum horizontal miss distance within a window of position dicts."""
+        """
+        Find minimum horizontal miss distance within a time window.
+        
+        Args:
+            window_steps: Sequence of position dicts for the time window.
+            
+        Returns:
+            Minimum pairwise separation (NM) in window, or 0.0 if no valid pairs.
+        """
         m = float('inf')
         for step in window_steps:
             aids = list(step.keys())

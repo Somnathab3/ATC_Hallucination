@@ -1,6 +1,7 @@
 """
 Plot Training Rewards Across All Scenarios
 Visualizes training progress with rewards over timesteps for all trained models.
+Creates separate plots by training complexity: 2×2, 3+1, 4-all, and Generic.
 Automatically discovers training folders and extracts scenario names.
 """
 
@@ -9,17 +10,22 @@ import plotly.graph_objects as go
 from pathlib import Path
 import numpy as np
 import re
+import matplotlib.pyplot as plt
+import matplotlib
+matplotlib.use('Agg')
 
 # Base directory for training results
 TRAINING_DIR = Path(r"F:\ATC_Hallucination\training")
+OUTPUT_DIR = Path(r"F:\ATC_Hallucination\results\figs_plotly")
+OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
-# Color palette for scenarios (will cycle through if more scenarios than colors)
-COLOR_PALETTE = [
-    "#1f77b4", "#ff7f0e", "#2ca02c", "#d62728", "#9467bd", 
-    "#8c564b", "#e377c2", "#7f7f7f", "#bcbd22", "#17becf",
-    "#aec7e8", "#ffbb78", "#98df8a", "#ff9896", "#c5b0d5",
-    "#c49c94", "#f7b6d2", "#c7c7c7", "#dbdb8d", "#9edae5"
-]
+# Color palette for scenarios (by family)
+COLOR_PALETTE = {
+    'chase': "#1f77b4",  # Blue
+    'cross': "#ff7f0e",  # Orange
+    'merge': "#2ca02c",  # Green
+    'generic': "#9467bd" # Purple
+}
 
 def extract_scenario_name(folder_name):
     """

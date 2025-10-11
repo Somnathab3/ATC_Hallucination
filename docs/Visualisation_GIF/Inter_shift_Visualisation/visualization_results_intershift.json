@@ -1,0 +1,966 @@
+{
+  "execution_time": "2025-10-11 18:48:47",
+  "mode": "intershift",
+  "configuration": {
+    "episodes": 1,
+    "fps": 8,
+    "record_gifs": true,
+    "log_trajectories": true
+  },
+  "results": [
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_2x2_20251008_050349",
+        "scenario": "cross_3p1",
+        "trained_scenario": "cross_2x2",
+        "algo": "PPO",
+        "description": "Model trained on cross_2x2 tested on cross_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 35.82354664802551,
+      "stdout": "20251011_173646.csv (105,827 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_cross_3p1_20251011_174347.csv (105,827 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_cross_4all_20251011_173727.csv (99,550 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_2x2_20251011_173804.csv (118,468 bytes)\n   \ud83d\udcca Total data: 535,499 bytes across 5 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_2x2__on__cross_3p1.gif (2.2 MB, 93 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 3
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_2x2_20251008_050349",
+        "scenario": "cross_4all",
+        "trained_scenario": "cross_2x2",
+        "algo": "PPO",
+        "description": "Model trained on cross_2x2 tested on cross_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 32.92439270019531,
+      "stdout": "0251011_174347.csv (105,827 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_cross_4all_20251011_173727.csv (99,550 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_cross_4all_20251011_174428.csv (99,550 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_2x2_20251011_173804.csv (118,468 bytes)\n   \ud83d\udcca Total data: 635,049 bytes across 6 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_2x2__on__cross_4all.gif (2.0 MB, 80 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 2
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_2x2_20251008_050349",
+        "scenario": "merge_2x2",
+        "trained_scenario": "cross_2x2",
+        "algo": "PPO",
+        "description": "Model trained on cross_2x2 tested on merge_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 32.56364893913269,
+      "stdout": "_20251011_173727.csv (99,550 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_cross_4all_20251011_174428.csv (99,550 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_2x2_20251011_173804.csv (118,468 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_2x2_20251011_174506.csv (118,468 bytes)\n   \ud83d\udcca Total data: 753,517 bytes across 7 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_2x2__on__merge_2x2.gif (1.9 MB, 82 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 2
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_2x2_20251008_050349",
+        "scenario": "merge_3p1",
+        "trained_scenario": "cross_2x2",
+        "algo": "PPO",
+        "description": "Model trained on cross_2x2 tested on merge_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 60.511892318725586,
+      "stdout": "20251011_174428.csv (99,550 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_2x2_20251011_173804.csv (118,468 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_2x2_20251011_174506.csv (118,468 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_174543.csv (167,212 bytes)\n   \ud83d\udcca Total data: 920,729 bytes across 8 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_2x2__on__merge_3p1.gif (4.3 MB, 199 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 1
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_2x2_20251008_050349",
+        "scenario": "merge_4all",
+        "trained_scenario": "cross_2x2",
+        "algo": "PPO",
+        "description": "Model trained on cross_2x2 tested on merge_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 47.56804275512695,
+      "stdout": "011_173804.csv (118,468 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_2x2_20251011_174506.csv (118,468 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_174543.csv (167,212 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n   \ud83d\udcca Total data: 1,070,798 bytes across 9 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_2x2__on__merge_4all.gif (3.0 MB, 143 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 1
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_2x2_20251008_050349",
+        "scenario": "chase_2x2",
+        "trained_scenario": "cross_2x2",
+        "algo": "PPO",
+        "description": "Model trained on cross_2x2 tested on chase_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 34.835306882858276,
+      "stdout": "1011_173804.csv (118,468 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_2x2_20251011_174506.csv (118,468 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_174543.csv (167,212 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n   \ud83d\udcca Total data: 1,176,104 bytes across 10 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_2x2__on__chase_2x2.gif (1.8 MB, 91 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 1
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_2x2_20251008_050349",
+        "scenario": "chase_3p1",
+        "trained_scenario": "cross_2x2",
+        "algo": "PPO",
+        "description": "Model trained on cross_2x2 tested on chase_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 60.657464265823364,
+      "stdout": "011_173804.csv (118,468 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_2x2_20251011_174506.csv (118,468 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_174543.csv (167,212 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n   \ud83d\udcca Total data: 1,341,877 bytes across 11 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_2x2__on__chase_3p1.gif (4.4 MB, 199 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 1
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_2x2_20251008_050349",
+        "scenario": "chase_4all",
+        "trained_scenario": "cross_2x2",
+        "algo": "PPO",
+        "description": "Model trained on cross_2x2 tested on chase_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 60.83175587654114,
+      "stdout": "11_173804.csv (118,468 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_2x2_20251011_174506.csv (118,468 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_174543.csv (167,212 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n   \ud83d\udcca Total data: 1,467,239 bytes across 12 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_2x2__on__chase_4all.gif (4.1 MB, 199 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 1
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_3p1_20251008_055141",
+        "scenario": "cross_2x2",
+        "trained_scenario": "cross_3p1",
+        "algo": "PPO",
+        "description": "Model trained on cross_3p1 tested on cross_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 31.21912980079651,
+      "stdout": "1011_173804.csv (118,468 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_2x2_20251011_174506.csv (118,468 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_174543.csv (167,212 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n   \ud83d\udcca Total data: 1,585,300 bytes across 13 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_3p1__on__cross_2x2.gif (1.5 MB, 74 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 1
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_3p1_20251008_055141",
+        "scenario": "cross_4all",
+        "trained_scenario": "cross_3p1",
+        "algo": "PPO",
+        "description": "Model trained on cross_3p1 tested on cross_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 30.905268669128418,
+      "stdout": "011_173804.csv (118,468 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_2x2_20251011_174506.csv (118,468 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_174543.csv (167,212 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n   \ud83d\udcca Total data: 1,700,166 bytes across 14 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_3p1__on__cross_4all.gif (1.6 MB, 72 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 3
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_3p1_20251008_055141",
+        "scenario": "merge_2x2",
+        "trained_scenario": "cross_3p1",
+        "algo": "PPO",
+        "description": "Model trained on cross_3p1 tested on merge_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 43.123244285583496,
+      "stdout": "011_174506.csv (118,468 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_2x2_20251011_175145.csv (161,371 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_174543.csv (167,212 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n   \ud83d\udcca Total data: 1,861,537 bytes across 15 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_3p1__on__merge_2x2.gif (2.8 MB, 126 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 3
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_3p1_20251008_055141",
+        "scenario": "merge_3p1",
+        "trained_scenario": "cross_3p1",
+        "algo": "PPO",
+        "description": "Model trained on cross_3p1 tested on merge_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 45.80168271064758,
+      "stdout": "011_175145.csv (161,371 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_174543.csv (167,212 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_175233.csv (213,127 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n   \ud83d\udcca Total data: 2,074,664 bytes across 16 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_3p1__on__merge_3p1.gif (2.7 MB, 138 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 2
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_3p1_20251008_055141",
+        "scenario": "merge_4all",
+        "trained_scenario": "cross_3p1",
+        "algo": "PPO",
+        "description": "Model trained on cross_3p1 tested on merge_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 44.61985969543457,
+      "stdout": "1_174543.csv (167,212 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_175233.csv (213,127 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n   \ud83d\udcca Total data: 2,287,241 bytes across 17 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_3p1__on__merge_4all.gif (2.8 MB, 132 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 2
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_3p1_20251008_055141",
+        "scenario": "chase_2x2",
+        "trained_scenario": "cross_3p1",
+        "algo": "PPO",
+        "description": "Model trained on cross_3p1 tested on chase_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 30.202570915222168,
+      "stdout": "011_174543.csv (167,212 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_175233.csv (213,127 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n   \ud83d\udcca Total data: 2,388,392 bytes across 18 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_3p1__on__chase_2x2.gif (1.3 MB, 70 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 2
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_3p1_20251008_055141",
+        "scenario": "chase_3p1",
+        "trained_scenario": "cross_3p1",
+        "algo": "PPO",
+        "description": "Model trained on cross_3p1 tested on chase_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 60.178946018218994,
+      "stdout": "11_174543.csv (167,212 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_175233.csv (213,127 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n   \ud83d\udcca Total data: 2,549,453 bytes across 19 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_3p1__on__chase_3p1.gif (3.9 MB, 199 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 2
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_3p1_20251008_055141",
+        "scenario": "chase_4all",
+        "trained_scenario": "cross_3p1",
+        "algo": "PPO",
+        "description": "Model trained on cross_3p1 tested on chase_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 29.64636731147766,
+      "stdout": "11_174543.csv (167,212 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_175233.csv (213,127 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n   \ud83d\udcca Total data: 2,622,650 bytes across 20 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_3p1__on__chase_4all.gif (1.2 MB, 67 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 2
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_4all_20251008_053820",
+        "scenario": "cross_2x2",
+        "trained_scenario": "cross_4all",
+        "algo": "PPO",
+        "description": "Model trained on cross_4all tested on cross_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 30.668110609054565,
+      "stdout": "11_174543.csv (167,212 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_175233.csv (213,127 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n   \ud83d\udcca Total data: 2,733,209 bytes across 21 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_4all__on__cross_2x2.gif (1.4 MB, 71 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 2
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_4all_20251008_053820",
+        "scenario": "cross_3p1",
+        "trained_scenario": "cross_4all",
+        "algo": "PPO",
+        "description": "Model trained on cross_4all tested on cross_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 32.00301790237427,
+      "stdout": "11_174543.csv (167,212 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_175233.csv (213,127 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n   \ud83d\udcca Total data: 2,852,170 bytes across 22 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_4all__on__cross_3p1.gif (1.9 MB, 77 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 4
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_4all_20251008_053820",
+        "scenario": "merge_2x2",
+        "trained_scenario": "cross_4all",
+        "algo": "PPO",
+        "description": "Model trained on cross_4all tested on merge_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 35.04599690437317,
+      "stdout": "11_174543.csv (167,212 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_175233.csv (213,127 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n   \ud83d\udcca Total data: 2,997,741 bytes across 23 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_4all__on__merge_2x2.gif (2.1 MB, 91 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 4
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_4all_20251008_053820",
+        "scenario": "merge_3p1",
+        "trained_scenario": "cross_4all",
+        "algo": "PPO",
+        "description": "Model trained on cross_4all tested on merge_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 43.849021434783936,
+      "stdout": "1_175233.csv (213,127 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_3p1_20251011_175821.csv (198,117 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n   \ud83d\udcca Total data: 3,195,858 bytes across 24 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_4all__on__merge_3p1.gif (2.6 MB, 130 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 3
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_4all_20251008_053820",
+        "scenario": "merge_4all",
+        "trained_scenario": "cross_4all",
+        "algo": "PPO",
+        "description": "Model trained on cross_4all tested on merge_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 52.61082410812378,
+      "stdout": "175821.csv (198,117 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n   \ud83d\udcca Total data: 3,417,621 bytes across 25 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_4all__on__merge_4all.gif (3.5 MB, 167 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 3
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_4all_20251008_053820",
+        "scenario": "chase_2x2",
+        "trained_scenario": "cross_4all",
+        "algo": "PPO",
+        "description": "Model trained on cross_4all tested on chase_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 32.616833448410034,
+      "stdout": "1_175821.csv (198,117 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n   \ud83d\udcca Total data: 3,523,789 bytes across 26 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_4all__on__chase_2x2.gif (1.5 MB, 76 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 3
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_4all_20251008_053820",
+        "scenario": "chase_3p1",
+        "trained_scenario": "cross_4all",
+        "algo": "PPO",
+        "description": "Model trained on cross_4all tested on chase_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 31.408275842666626,
+      "stdout": "1_175821.csv (198,117 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n   \ud83d\udcca Total data: 3,621,804 bytes across 27 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_4all__on__chase_3p1.gif (1.5 MB, 75 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 3
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_cross_4all_20251008_053820",
+        "scenario": "chase_4all",
+        "trained_scenario": "cross_4all",
+        "algo": "PPO",
+        "description": "Model trained on cross_4all tested on chase_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 31.54960560798645,
+      "stdout": "_175821.csv (198,117 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n   \ud83d\udcca Total data: 3,705,213 bytes across 28 episodes\n\ud83d\udcbe Saved Episode 1 GIF: cross_4all__on__chase_4all.gif (1.4 MB, 75 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 3
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_2x2_20251008_170616",
+        "scenario": "cross_2x2",
+        "trained_scenario": "merge_2x2",
+        "algo": "PPO",
+        "description": "Model trained on merge_2x2 tested on cross_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 23.22309970855713,
+      "stdout": "11_175821.csv (198,117 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n   \ud83d\udcca Total data: 3,765,641 bytes across 29 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_2x2__on__cross_2x2.gif (0.9 MB, 37 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 3
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_2x2_20251008_170616",
+        "scenario": "cross_3p1",
+        "trained_scenario": "merge_2x2",
+        "algo": "PPO",
+        "description": "Model trained on merge_2x2 tested on cross_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 23.26566481590271,
+      "stdout": "11_175821.csv (198,117 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n   \ud83d\udcca Total data: 3,824,426 bytes across 30 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_2x2__on__cross_3p1.gif (1.0 MB, 37 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 5
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_2x2_20251008_170616",
+        "scenario": "cross_4all",
+        "trained_scenario": "merge_2x2",
+        "algo": "PPO",
+        "description": "Model trained on merge_2x2 tested on cross_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 22.588783264160156,
+      "stdout": "1_175821.csv (198,117 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n   \ud83d\udcca Total data: 3,885,041 bytes across 31 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_2x2__on__cross_4all.gif (0.9 MB, 37 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 4
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_2x2_20251008_170616",
+        "scenario": "merge_3p1",
+        "trained_scenario": "merge_2x2",
+        "algo": "PPO",
+        "description": "Model trained on merge_2x2 tested on merge_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 28.88590931892395,
+      "stdout": "11_180323.csv (100,703 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n   \ud83d\udcca Total data: 3,985,744 bytes across 32 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_2x2__on__merge_3p1.gif (1.5 MB, 63 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 4
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_2x2_20251008_170616",
+        "scenario": "merge_4all",
+        "trained_scenario": "merge_2x2",
+        "algo": "PPO",
+        "description": "Model trained on merge_2x2 tested on merge_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 28.155930280685425,
+      "stdout": "1_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n   \ud83d\udcca Total data: 4,088,587 bytes across 33 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_2x2__on__merge_4all.gif (1.5 MB, 62 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 4
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_2x2_20251008_170616",
+        "scenario": "chase_2x2",
+        "trained_scenario": "merge_2x2",
+        "algo": "PPO",
+        "description": "Model trained on merge_2x2 tested on chase_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 23.72604012489319,
+      "stdout": "11_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n   \ud83d\udcca Total data: 4,142,667 bytes across 34 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_2x2__on__chase_2x2.gif (0.7 MB, 37 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 4
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_2x2_20251008_170616",
+        "scenario": "chase_3p1",
+        "trained_scenario": "merge_2x2",
+        "algo": "PPO",
+        "description": "Model trained on merge_2x2 tested on chase_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 22.983745098114014,
+      "stdout": "11_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n   \ud83d\udcca Total data: 4,193,765 bytes across 35 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_2x2__on__chase_3p1.gif (0.7 MB, 36 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 4
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_2x2_20251008_170616",
+        "scenario": "chase_4all",
+        "trained_scenario": "merge_2x2",
+        "algo": "PPO",
+        "description": "Model trained on merge_2x2 tested on chase_4all"
+      },
+      "success": false,
+      "error": "Process timeout (10 minutes exceeded)",
+      "duration_s": 600.0854787826538
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_3p1_20251008_192721",
+        "scenario": "cross_2x2",
+        "trained_scenario": "merge_3p1",
+        "algo": "PPO",
+        "description": "Model trained on merge_3p1 tested on cross_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 62.238929986953735,
+      "stdout": "1_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n   \ud83d\udcca Total data: 4,337,181 bytes across 36 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_3p1__on__cross_2x2.gif (4.4 MB, 199 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 4
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_3p1_20251008_192721",
+        "scenario": "cross_3p1",
+        "trained_scenario": "merge_3p1",
+        "algo": "PPO",
+        "description": "Model trained on merge_3p1 tested on cross_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 29.878967761993408,
+      "stdout": "11_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n   \ud83d\udcca Total data: 4,423,545 bytes across 37 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_3p1__on__cross_3p1.gif (1.5 MB, 64 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 6
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_3p1_20251008_192721",
+        "scenario": "cross_4all",
+        "trained_scenario": "merge_3p1",
+        "algo": "PPO",
+        "description": "Model trained on merge_3p1 tested on cross_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 27.45594334602356,
+      "stdout": "1_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n   \ud83d\udcca Total data: 4,501,390 bytes across 38 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_3p1__on__cross_4all.gif (1.3 MB, 54 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 5
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_3p1_20251008_192721",
+        "scenario": "merge_2x2",
+        "trained_scenario": "merge_3p1",
+        "algo": "PPO",
+        "description": "Model trained on merge_3p1 tested on merge_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 34.9005229473114,
+      "stdout": "11_174649.csv (150,069 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n   \ud83d\udcca Total data: 4,632,696 bytes across 39 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_3p1__on__merge_2x2.gif (2.0 MB, 88 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 5
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_3p1_20251008_192721",
+        "scenario": "merge_4all",
+        "trained_scenario": "merge_3p1",
+        "algo": "PPO",
+        "description": "Model trained on merge_3p1 tested on merge_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 43.06248354911804,
+      "stdout": "_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 4,782,639 bytes across 40 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_3p1__on__merge_4all.gif (2.5 MB, 121 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 5
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_3p1_20251008_192721",
+        "scenario": "chase_2x2",
+        "trained_scenario": "merge_3p1",
+        "algo": "PPO",
+        "description": "Model trained on merge_3p1 tested on chase_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 27.297715425491333,
+      "stdout": "11_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 4,852,397 bytes across 41 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_3p1__on__chase_2x2.gif (1.0 MB, 52 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 5
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_3p1_20251008_192721",
+        "scenario": "chase_3p1",
+        "trained_scenario": "merge_3p1",
+        "algo": "PPO",
+        "description": "Model trained on merge_3p1 tested on chase_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 26.6365168094635,
+      "stdout": "11_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 4,916,266 bytes across 42 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_3p1__on__chase_3p1.gif (1.0 MB, 48 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 5
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_3p1_20251008_192721",
+        "scenario": "chase_4all",
+        "trained_scenario": "merge_3p1",
+        "algo": "PPO",
+        "description": "Model trained on merge_3p1 tested on chase_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 24.432087421417236,
+      "stdout": "1_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 4,962,914 bytes across 43 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_3p1__on__chase_4all.gif (0.7 MB, 40 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 4
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_4all_20251009_024636",
+        "scenario": "cross_2x2",
+        "trained_scenario": "merge_4all",
+        "algo": "PPO",
+        "description": "Model trained on merge_4all tested on cross_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 31.596596479415894,
+      "stdout": "1_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 5,056,764 bytes across 44 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_4all__on__cross_2x2.gif (1.5 MB, 70 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 5
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_4all_20251009_024636",
+        "scenario": "cross_3p1",
+        "trained_scenario": "merge_4all",
+        "algo": "PPO",
+        "description": "Model trained on merge_4all tested on cross_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 30.55458378791809,
+      "stdout": "1_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 5,134,141 bytes across 45 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_4all__on__cross_3p1.gif (1.5 MB, 65 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 7
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_4all_20251009_024636",
+        "scenario": "cross_4all",
+        "trained_scenario": "merge_4all",
+        "algo": "PPO",
+        "description": "Model trained on merge_4all tested on cross_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 62.374420404434204,
+      "stdout": "175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 5,275,406 bytes across 46 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_4all__on__cross_4all.gif (4.0 MB, 199 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 6
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_4all_20251009_024636",
+        "scenario": "merge_2x2",
+        "trained_scenario": "merge_4all",
+        "algo": "PPO",
+        "description": "Model trained on merge_4all tested on merge_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 40.76845192909241,
+      "stdout": "_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 5,421,719 bytes across 47 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_4all__on__merge_2x2.gif (2.3 MB, 111 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 6
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_4all_20251009_024636",
+        "scenario": "merge_3p1",
+        "trained_scenario": "merge_4all",
+        "algo": "PPO",
+        "description": "Model trained on merge_4all tested on merge_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 52.727790117263794,
+      "stdout": "_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 5,601,116 bytes across 48 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_4all__on__merge_3p1.gif (3.4 MB, 163 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 5
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_4all_20251009_024636",
+        "scenario": "chase_2x2",
+        "trained_scenario": "merge_4all",
+        "algo": "PPO",
+        "description": "Model trained on merge_4all tested on chase_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 37.909433126449585,
+      "stdout": "1_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 5,700,967 bytes across 49 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_4all__on__chase_2x2.gif (2.1 MB, 97 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 6
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_4all_20251009_024636",
+        "scenario": "chase_3p1",
+        "trained_scenario": "merge_4all",
+        "algo": "PPO",
+        "description": "Model trained on merge_4all tested on chase_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 29.40399956703186,
+      "stdout": "1_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 5,766,332 bytes across 50 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_4all__on__chase_3p1.gif (1.2 MB, 62 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 6
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_merge_4all_20251009_024636",
+        "scenario": "chase_4all",
+        "trained_scenario": "merge_4all",
+        "algo": "PPO",
+        "description": "Model trained on merge_4all tested on chase_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 24.599225521087646,
+      "stdout": "_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 5,811,081 bytes across 51 episodes\n\ud83d\udcbe Saved Episode 1 GIF: merge_4all__on__chase_4all.gif (0.8 MB, 40 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 5
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_chase_2x2_20251008_015945",
+        "scenario": "cross_2x2",
+        "trained_scenario": "chase_2x2",
+        "algo": "PPO",
+        "description": "Model trained on chase_2x2 tested on cross_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 61.404229164123535,
+      "stdout": "1_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 5,948,067 bytes across 52 episodes\n\ud83d\udcbe Saved Episode 1 GIF: chase_2x2__on__cross_2x2.gif (4.3 MB, 199 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 6
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_chase_2x2_20251008_015945",
+        "scenario": "cross_3p1",
+        "trained_scenario": "chase_2x2",
+        "algo": "PPO",
+        "description": "Model trained on chase_2x2 tested on cross_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 27.420532941818237,
+      "stdout": "11_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 6,021,653 bytes across 53 episodes\n\ud83d\udcbe Saved Episode 1 GIF: chase_2x2__on__cross_3p1.gif (1.2 MB, 53 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 8
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_chase_2x2_20251008_015945",
+        "scenario": "cross_4all",
+        "trained_scenario": "chase_2x2",
+        "algo": "PPO",
+        "description": "Model trained on chase_2x2 tested on cross_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 35.846649169921875,
+      "stdout": "1_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 6,120,237 bytes across 54 episodes\n\ud83d\udcbe Saved Episode 1 GIF: chase_2x2__on__cross_4all.gif (2.1 MB, 91 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 7
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_chase_2x2_20251008_015945",
+        "scenario": "merge_2x2",
+        "trained_scenario": "chase_2x2",
+        "algo": "PPO",
+        "description": "Model trained on chase_2x2 tested on merge_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 31.229058980941772,
+      "stdout": "11_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 6,231,694 bytes across 55 episodes\n\ud83d\udcbe Saved Episode 1 GIF: chase_2x2__on__merge_2x2.gif (1.6 MB, 71 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 7
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_chase_2x2_20251008_015945",
+        "scenario": "merge_3p1",
+        "trained_scenario": "chase_2x2",
+        "algo": "PPO",
+        "description": "Model trained on chase_2x2 tested on merge_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 60.89185404777527,
+      "stdout": "1_175324.csv (212,577 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n   \ud83d\udcca Total data: 6,401,952 bytes across 56 episodes\n\ud83d\udcbe Saved Episode 1 GIF: chase_2x2__on__merge_3p1.gif (3.9 MB, 199 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 6
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_chase_2x2_20251008_015945",
+        "scenario": "merge_4all",
+        "trained_scenario": "chase_2x2",
+        "algo": "PPO",
+        "description": "Model trained on chase_2x2 tested on merge_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 61.42292857170105,
+      "stdout": "_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_183040.csv (187,679 bytes)\n   \ud83d\udcca Total data: 6,589,631 bytes across 57 episodes\n\ud83d\udcbe Saved Episode 1 GIF: chase_2x2__on__merge_4all.gif (4.0 MB, 199 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 6
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_chase_2x2_20251008_015945",
+        "scenario": "chase_3p1",
+        "trained_scenario": "chase_2x2",
+        "algo": "PPO",
+        "description": "Model trained on chase_2x2 tested on chase_3p1"
+      },
+      "success": false,
+      "error": "Process timeout (10 minutes exceeded)",
+      "duration_s": 600.0901570320129
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_chase_2x2_20251008_015945",
+        "scenario": "chase_4all",
+        "trained_scenario": "chase_2x2",
+        "algo": "PPO",
+        "description": "Model trained on chase_2x2 tested on chase_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 27.88586401939392,
+      "stdout": "1_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_183040.csv (187,679 bytes)\n   \ud83d\udcca Total data: 6,643,185 bytes across 58 episodes\n\ud83d\udcbe Saved Episode 1 GIF: chase_2x2__on__chase_4all.gif (1.1 MB, 57 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 6
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_chase_3p1_20251008_015936",
+        "scenario": "cross_2x2",
+        "trained_scenario": "chase_3p1",
+        "algo": "PPO",
+        "description": "Model trained on chase_3p1 tested on cross_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 26.089921951293945,
+      "stdout": "11_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_183040.csv (187,679 bytes)\n   \ud83d\udcca Total data: 6,713,877 bytes across 59 episodes\n\ud83d\udcbe Saved Episode 1 GIF: chase_3p1__on__cross_2x2.gif (1.2 MB, 49 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 7
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_chase_3p1_20251008_015936",
+        "scenario": "cross_3p1",
+        "trained_scenario": "chase_3p1",
+        "algo": "PPO",
+        "description": "Model trained on chase_3p1 tested on cross_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 61.46254563331604,
+      "stdout": "1_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_183040.csv (187,679 bytes)\n   \ud83d\udcca Total data: 6,847,770 bytes across 60 episodes\n\ud83d\udcbe Saved Episode 1 GIF: chase_3p1__on__cross_3p1.gif (4.6 MB, 199 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 9
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_chase_3p1_20251008_015936",
+        "scenario": "cross_4all",
+        "trained_scenario": "chase_3p1",
+        "algo": "PPO",
+        "description": "Model trained on chase_3p1 tested on cross_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 61.470542192459106,
+      "stdout": "_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_183040.csv (187,679 bytes)\n   \ud83d\udcca Total data: 6,980,372 bytes across 61 episodes\n\ud83d\udcbe Saved Episode 1 GIF: chase_3p1__on__cross_4all.gif (4.4 MB, 199 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 8
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_chase_3p1_20251008_015936",
+        "scenario": "merge_2x2",
+        "trained_scenario": "chase_3p1",
+        "algo": "PPO",
+        "description": "Model trained on chase_3p1 tested on merge_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 57.413411140441895,
+      "stdout": "1_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_183040.csv (187,679 bytes)\n   \ud83d\udcca Total data: 7,153,517 bytes across 62 episodes\n\ud83d\udcbe Saved Episode 1 GIF: chase_3p1__on__merge_2x2.gif (4.1 MB, 181 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 8
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_chase_3p1_20251008_015936",
+        "scenario": "merge_3p1",
+        "trained_scenario": "chase_3p1",
+        "algo": "PPO",
+        "description": "Model trained on chase_3p1 tested on merge_3p1"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 33.445971727371216,
+      "stdout": "11_175910.csv (221,763 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_183040.csv (187,679 bytes)\n   \ud83d\udcca Total data: 7,268,597 bytes across 63 episodes\n\ud83d\udcbe Saved Episode 1 GIF: chase_3p1__on__merge_3p1.gif (1.7 MB, 80 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 7
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_chase_3p1_20251008_015936",
+        "scenario": "merge_4all",
+        "trained_scenario": "chase_3p1",
+        "algo": "PPO",
+        "description": "Model trained on chase_3p1 tested on merge_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 33.83313870429993,
+      "stdout": "1_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_183040.csv (187,679 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_184649.csv (118,145 bytes)\n   \ud83d\udcca Total data: 7,386,742 bytes across 64 episodes\n\ud83d\udcbe Saved Episode 1 GIF: chase_3p1__on__merge_4all.gif (1.7 MB, 83 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 7
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_chase_3p1_20251008_015936",
+        "scenario": "chase_2x2",
+        "trained_scenario": "chase_3p1",
+        "algo": "PPO",
+        "description": "Model trained on chase_3p1 tested on chase_2x2"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 61.310035705566406,
+      "stdout": "1_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_183040.csv (187,679 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_184649.csv (118,145 bytes)\n   \ud83d\udcca Total data: 7,512,124 bytes across 65 episodes\n\ud83d\udcbe Saved Episode 1 GIF: chase_3p1__on__chase_2x2.gif (3.5 MB, 199 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 7
+    },
+    {
+      "config": {
+        "checkpoint": "F:\\ATC_Hallucination\\models\\PPO_chase_3p1_20251008_015936",
+        "scenario": "chase_4all",
+        "trained_scenario": "chase_3p1",
+        "algo": "PPO",
+        "description": "Model trained on chase_3p1 tested on chase_4all"
+      },
+      "success": true,
+      "error": null,
+      "duration_s": 26.00068950653076,
+      "stdout": "1_180357.csv (102,843 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_181827.csv (149,943 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_183040.csv (187,679 bytes)\n      \u2022 Episode 001: traj_vis_ep_001_merge_4all_20251011_184649.csv (118,145 bytes)\n   \ud83d\udcca Total data: 7,559,896 bytes across 66 episodes\n\ud83d\udcbe Saved Episode 1 GIF: chase_3p1__on__chase_4all.gif (0.9 MB, 47 frames)\nLoading global navigation database...\nReading cache: C:\\Users\\Somnath\\bluesky\\cache\\navdata.p\n",
+      "gif_count": 0,
+      "csv_count": 7
+    }
+  ]
+}
