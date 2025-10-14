@@ -9,6 +9,8 @@ Description:
         Tests model robustness to variations WITHIN the same scenario family.
         Modifies individual agent parameters while keeping scenario geometry intact.
         Compares perturbed episodes against baseline (unperturbed) episodes.
+        Wind coupling REMOVED: All shifts (except dedicated wind tests) execute 
+        WITHOUT wind to isolate individual parameter effects.
     
     Shift Taxonomy:
         Position Shifts:
@@ -24,6 +26,10 @@ Description:
         Waypoint Shifts:
             - waypoint_lateral: Move waypoint perpendicular (±5, ±10 NM)
             - waypoint_longitudinal: Move waypoint along path (±5, ±10 NM)
+        
+        Wind Shifts:
+            - wind: Dedicated wind tests with various profiles (10-35 kt, 8 directions)
+            - ONLY applied as explicit wind shift tests, NOT coupled to other shifts
     
     Testing Protocol:
         1. Load trained model checkpoint
@@ -478,7 +484,10 @@ def create_targeted_shift(agent_id: str, shift_type: str, shift_value: float, sc
 
 def _create_wind_config_for_shift(test_id: str, shift_type: str, shift_value: float, shift_data: Optional[Any] = None) -> Dict[str, Any]:
     """
-    Create wind and noise configuration based on the shift type and characteristics.
+    Create wind configuration for the shift.
+    
+    Wind is only applied for explicit wind shift tests. All other shifts (baseline, speed, 
+    position, heading, aircraft_type, waypoint) use NO wind to isolate the shift effect.
     
     Args:
         test_id: Unique test identifier
@@ -487,85 +496,18 @@ def _create_wind_config_for_shift(test_id: str, shift_type: str, shift_value: fl
         shift_data: Additional shift data (e.g., explicit wind configuration)
     
     Returns:
-        Dictionary containing wind and noise configuration
+        Dictionary containing wind configuration (empty for non-wind shifts)
     """
-    # Base configuration - wind only (noise/turbulence removed)
-    env_shift: Dict[str, Any] = {
-        # Wind configuration will be added based on shift type
-    }
+    env_shift: Dict[str, Any] = {}
     
-    # Handle explicit wind shifts
+    # Only apply wind for explicit wind shift tests
     if shift_type == "wind" and shift_data and isinstance(shift_data, dict):
         env_shift["wind"] = shift_data
-        return env_shift
-    
-    # Different wind configurations based on shift characteristics
-    if "baseline" in test_id:
-        # Baseline: mild uniform wind
-        env_shift["wind"] = {
-            "mode": "uniform",
-            "dir_deg": 270,  # West wind
-            "kt": 15
-        }
-    elif "speed" in shift_type:
-        # Speed shifts: crosswind to challenge airspeed management
-        wind_strength = 20 + abs(shift_value) * 0.5  # Scale with shift magnitude
-        env_shift["wind"] = {
-            "mode": "uniform", 
-            "dir_deg": 90,  # East crosswind (perpendicular to typical routes)
-            "kt": min(wind_strength, 35)  # Cap at reasonable value
-        }
-    elif "position" in shift_type:
-        # Position shifts: headwind/tailwind components to affect timing
-        if "closer" in shift_type:
-            # Agents moving closer: use tailwind to increase convergence pressure
-            env_shift["wind"] = {
-                "mode": "uniform",
-                "dir_deg": 0,  # North wind (tailwind for south-bound traffic)
-                "kt": 25
-            }
-        elif "lateral" in shift_type:
-            # Lateral shifts: use layered winds to create vertical complexity
-            env_shift["wind"] = {
-                "mode": "layered",
-                "layers": [
-                    {"alt_ft": 10000, "dir_deg": 270, "kt": 20},  # West at FL100
-                    {"alt_ft": 20000, "dir_deg": 90, "kt": 15},   # East at FL200
-                    {"alt_ft": 30000, "dir_deg": 180, "kt": 25}   # South at FL300
-                ]
-            }
-    elif "heading" in shift_type:
-        # Heading shifts: strong crosswind to challenge course maintenance
-        wind_dir = 45 if shift_value > 0 else 315  # NE or NW wind based on shift direction
-        env_shift["wind"] = {
-            "mode": "uniform",
-            "dir_deg": wind_dir,
-            "kt": 30
-        }
-    elif "aircraft" in shift_type:
-        # Aircraft type changes: moderate uniform wind to test performance differences
-        env_shift["wind"] = {
-            "mode": "uniform",
-            "dir_deg": 225,  # SW wind
-            "kt": 18
-        }
-    elif "waypoint" in shift_type:
-        # Waypoint shifts: complex layered wind to challenge path planning
-        env_shift["wind"] = {
-            "mode": "layered", 
-            "layers": [
-                {"alt_ft": 8000, "dir_deg": 180, "kt": 22},   # South at lower altitude
-                {"alt_ft": 15000, "dir_deg": 270, "kt": 18},  # West at mid altitude  
-                {"alt_ft": 25000, "dir_deg": 90, "kt": 15}    # East at higher altitude
-            ]
-        }
+        LOGGER.info(f"🌬️  WIND APPLIED: {test_id} - {shift_data}")
     else:
-        # Default: moderate uniform wind
-        env_shift["wind"] = {
-            "mode": "uniform",
-            "dir_deg": 270,
-            "kt": 20
-        }
+        # All other shift types (baseline, speed, position, heading, aircraft_type, waypoint)
+        # have NO wind configuration - returns empty dict to use environment defaults
+        LOGGER.debug(f"✅ NO WIND: {test_id} (shift_type={shift_type})")
     
     return env_shift
 
@@ -581,6 +523,10 @@ def create_conflict_inducing_shifts(scenario_agents: List[str], scenario_name: s
     
     Uses geometry-based constraints to prevent t=0 conflicts and focuses on
     representative agents per geometric role.
+    
+    Wind is ONLY applied as a dedicated shift condition (wind shift tests).
+    All other shifts (baseline, speed, position, heading, aircraft_type, waypoint)
+    execute WITHOUT wind to isolate individual parameter effects.
     
     Args:
         scenario_agents: List of representative agent IDs to test
@@ -1008,12 +954,14 @@ def _save_targeted_run_metadata(results_dir: str, repo_root: str, checkpoint_pat
         "deduplication_method": "geometric_role (heading_class × lane_side)",
         "shift_types": ["speed", "position_closer", "position_lateral", "heading", "aircraft_type", "waypoint", "wind"],
         "shift_ranges": ["micro", "macro"],
+        "wind_coupling": "DISABLED - Wind only applied for dedicated wind shift tests",
+        "isolation_principle": "All non-wind shifts execute WITHOUT wind to isolate parameter effects",
         "speed_shifts_kt": {"micro": "±2 to ±10 (gradual)", "macro": "±15 to ±35 (extended)"},
         "position_shifts_deg": {"micro": "±0.03 to ±0.15 (gradual)", "macro": "±0.18 to ±0.35 (extended)"},
         "heading_shifts_deg": {"micro": "±2 to ±10 (gradual)", "macro": "±15 to ±35 (extended)"},
         "aircraft_types": ["B737", "B747", "CRJ9"],
         "waypoint_shifts_deg": {"micro": "±0.03 to ±0.08 (gradual)", "macro": "±0.15 to ±0.3 (extended)"},
-        "wind_shifts": {"micro": "10-15 kt (4 directions)", "macro": "25-35 kt (8 directions)"},
+        "wind_shifts": {"micro": "10-15 kt (4 directions)", "macro": "25-35 kt (8 directions)", "note": "ONLY applied as dedicated shift tests"},
         "total_shift_configurations": int(total_shifts),
         "total_episodes": int(episodes_per_shift * total_shifts),
         "separation_threshold_nm": 6.0,
@@ -1041,6 +989,7 @@ Unlike unison shifts (where all agents are modified equally), targeted shifts:
 - Use micro→macro range variations to identify failure modes  
 - Create conflict-inducing scenarios (agents moved closer)
 - Test edge cases beyond training envelope
+- Execute WITHOUT wind coupling (except dedicated wind shift tests) to isolate parameter effects
 
 ## Directory Structure
 - `shifts/`: Episode-wise data organized by test configuration

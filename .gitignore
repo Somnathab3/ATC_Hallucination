@@ -9,6 +9,7 @@ checkpoint_*/
 *.pt
 *.model
 *.weights
+models*/
 
 # Results and Analysis Data
 results/
@@ -22,6 +23,8 @@ scenarios_*/
 scenario_centric*/
 test_plots/
 plots/
+tools/
+.github/copilot-instructions.md
 
 
 # Temporary and Cache Files
@@ -45,6 +48,8 @@ Unwanted/
 debug/
 scratch/
 experimental/
+thesis*/
+
 
 # Python
 __pycache__/
